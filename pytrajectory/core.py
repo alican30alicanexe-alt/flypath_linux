@@ -180,9 +180,6 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
                 specular=0.3, specular_power=15
             )
             
-            # Create transform for rotation and store on actor to prevent GC
-            model_actor._transform = pv.Transform()
-            
             def update_frame(step):
                 """Move and rotate model via actor transform."""
                 i = frame_indices[step % n_frames]
@@ -198,14 +195,9 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
                     # No orientation data available
                     pitch, yaw, roll = 0, 0, 0
                 
-                # Apply rotations in order: pitch, yaw, roll
-                model_actor._transform.identity()
-                model_actor._transform.rotate_x(pitch)  # pitch around X axis
-                model_actor._transform.rotate_z(yaw)    # yaw around Z axis
-                model_actor._transform.rotate_y(roll)   # roll around Y axis
-                
-                # Update actor transform
-                model_actor.SetUserTransform(model_actor._transform)
+                # Use VTK native orientation (avoids Python transform GC issues)
+                # VTK SetOrientation uses intrinsic rotations: roll, pitch, yaw
+                model_actor.SetOrientation(roll, pitch, yaw)
                 model_actor.SetPosition(pos[0], pos[1], pos[2])
                 plotter.render()
         else:
@@ -426,8 +418,6 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     model_mesh, color=model_color, smooth_shading=True,
                     specular=0.3, specular_power=15
                 )
-                # Store transform on actor to prevent garbage collection
-                actor._transform = pv.Transform()
                 actors.append({
                     'actor': actor,
                     'spline_points': sp_traj,
@@ -468,12 +458,8 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     else:
                         pitch, yaw, roll = 0, 0, 0
                     
-                    act['actor']._transform.identity()
-                    act['actor']._transform.rotate_x(pitch)
-                    act['actor']._transform.rotate_z(yaw)
-                    act['actor']._transform.rotate_y(roll)
-                    
-                    act['actor'].SetUserTransform(act['actor']._transform)
+                    # Use VTK native orientation (avoids Python transform GC issues)
+                    act['actor'].SetOrientation(roll, pitch, yaw)
                     act['actor'].SetPosition(pos[0], pos[1], pos[2])
                 else:
                     act['actor'].SetPosition(pos[0], pos[1], pos[2])
