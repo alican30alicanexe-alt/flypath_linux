@@ -190,6 +190,14 @@ def main():
         help='Column index for roll angle in trajectory data (default: 5)'
     )
     parser.add_argument(
+        '--rad', action='store_true',
+        help='Input angles are in radians (convert to degrees)'
+    )
+    parser.add_argument(
+        '--order', default='pyr',
+        help='Column order for orientation: "pyr"=pitch(3)/yaw(4)/roll(5) (default)'
+    )
+    parser.add_argument(
         '--save-animation', default=None,
         help='Save animation as a GIF file'
     )
@@ -275,6 +283,8 @@ def main():
             pitch_col=args.pitch_col,
             yaw_col=args.yaw_col,
             roll_col=args.roll_col,
+            radians=args.rad,
+            order=args.order,
         )
         return
 

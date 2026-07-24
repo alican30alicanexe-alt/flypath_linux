@@ -9,11 +9,30 @@ from pathlib import Path
 from .io import load_trajectory, load_3d_model
 
 
+def _get_orientation_columns(order_str):
+    """Parse order string into (pitch_col, yaw_col, roll_col) column indices.
+    
+    Default aerospace standard: 'pyr' = pitch(3), yaw(4), roll(5)
+    Other options: 'ypr' = yaw(3), pitch(4), roll(5), etc.
+    """
+    order_map = {
+        'p': 3,  # pitch
+        'y': 4,  # yaw  
+        'r': 5,  # roll
+    }
+    result = {}
+    for i, ch in enumerate(order_str.lower()[:3]):
+        if ch in order_map:
+            result[ch] = order_map[ch]
+    return result.get('p', 3), result.get('y', 4), result.get('r', 5)
+
+
 def flypath3d(data, line_width=2, color=None, colormap=None, 
               show_grid=True, show_axes=True, title=None,
               background='white', off_screen=False, return_plotter=False,
               animate=False, save_animation=None,
-              model=None, pitch_col=3, yaw_col=4, roll_col=5):
+              model=None, pitch_col=3, yaw_col=4, roll_col=5,
+              radians=False, order='pyr'):
     """MATLAB-like 3D trajectory plot with precision axis scaling.
     
     Renders a 3D trajectory with proper equal aspect ratio, MATLAB-style
@@ -51,11 +70,17 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
         Path to .mat file containing 3D model mesh (V, F, C arrays).
         If provided, uses model instead of sphere for animation.
     pitch_col : int, default 3
-        Column index for pitch angle in trajectory data (degrees).
+        Column index for pitch angle in trajectory data.
     yaw_col : int, default 4
-        Column index for yaw angle in trajectory data (degrees).
+        Column index for yaw angle in trajectory data.
     roll_col : int, default 5
-        Column index for roll angle in trajectory data (degrees).
+        Column index for roll angle in trajectory data.
+    radians : bool, default False
+        If True, input angles are in radians and will be converted to degrees.
+        If False (default), angles are assumed to be in degrees already.
+    order : str, default 'pyr'
+        Column order for orientation data: 'pyr' = pitch(3), yaw(4), roll(5).
+        Other options: 'ypr', 'rpy', etc.
     
     Returns
     -------
@@ -63,7 +88,7 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
         If return_plotter is True, returns the Plotter object.
     """
     # Load data
-    points = load_trajectory(data)
+    points, full_data, info = load_trajectory(data)
     
     if points.shape[1] != 3:
         raise ValueError(f"Expected (N, 3) array, got shape {points.shape}")
@@ -71,16 +96,15 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
     if len(points) < 2:
         raise ValueError(f"Need at least 2 points, got {len(points)}")
     
-    # Load full trajectory data (including orientation columns) if it's a file
-    if isinstance(data, (str, Path)):
-        from .io import load_csv, load_mat
-        path = Path(data)
-        if path.suffix.lower() == '.mat':
-            full_data = load_mat(path)
-        else:
-            full_data = load_csv(path)[0]
-    else:
-        full_data = points
+    # Determine orientation column indices
+    # If auto-detected column map has values, use those instead of defaults
+    col_map = info.get('col_map', {})
+    if col_map.get('pitch') is not None:
+        pitch_col = col_map['pitch']
+    if col_map.get('yaw') is not None:
+        yaw_col = col_map['yaw']
+    if col_map.get('roll') is not None:
+        roll_col = col_map['roll']
     
     # Determine color: default is 'blue', colormap overrides color
     use_color = color if color is not None else 'blue'
@@ -170,12 +194,12 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
             target_size = data_range * 0.05  # Model will be 5% of data range
             scale_factor = target_size / model_size if model_size > 0 else 1.0
             
-            # Center the model at origin (create new mesh, avoid inplace to prevent VTK refcount issues)
+            # Center the model at origin (create new mesh, avoid inplace)
             model_center = np.array(model_mesh.center)
             model_mesh = model_mesh.translate(-model_center)
             model_mesh = model_mesh.scale([scale_factor, scale_factor, scale_factor])
             
-            # Add model to plotter (no smooth_shading to avoid VTK normal computation issues)
+            # Add model to plotter
             anim_actor = plotter.add_mesh(
                 model_mesh, color='gray',
             )
@@ -189,18 +213,33 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
         
         # Pre-compute all frame positions and orientations
         frame_positions = sp[frame_indices]
-        if model is not None and full_data.shape[1] > max(pitch_col, yaw_col, roll_col):
-            frame_orientations = np.column_stack([
-                np.degrees(full_data[frame_indices, roll_col]),
-                np.degrees(full_data[frame_indices, pitch_col]),
-                np.degrees(full_data[frame_indices, yaw_col]),
-            ])
+        
+        # Get orientation data if available
+        has_orientation = (full_data is not None and 
+                          full_data.shape[1] > max(pitch_col, yaw_col, roll_col))
+        
+        if has_orientation:
+            # Extract angles from the specified columns
+            pitch_angles = full_data[frame_indices, pitch_col]
+            yaw_angles = full_data[frame_indices, yaw_col]
+            roll_angles = full_data[frame_indices, roll_col]
+            
+            # Convert radians to degrees if needed
+            if radians or info.get('from_mat', False):
+                # .mat files from MATLAB store angles in radians
+                pitch_angles = np.degrees(pitch_angles)
+                yaw_angles = np.degrees(yaw_angles)
+                roll_angles = np.degrees(roll_angles)
+            
+            # Apply aerospace rotation order: VTK SetOrientation(roll, pitch, yaw)
+            # applies ZYX intrinsic (yaw -> pitch -> roll)
+            frame_orientations = np.column_stack([roll_angles, pitch_angles, yaw_angles])
         else:
             frame_orientations = np.zeros((n_frames, 3))
         
         # Set initial position
         anim_actor.SetPosition(frame_positions[0][0], frame_positions[0][1], frame_positions[0][2])
-        if model is not None:
+        if has_orientation:
             anim_actor.SetOrientation(*frame_orientations[0])
         
         if save_animation is not None:
@@ -209,7 +248,7 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
             frames = []
             for f_idx in range(n_frames):
                 pos = frame_positions[f_idx]
-                if model is not None:
+                if has_orientation:
                     anim_actor.SetOrientation(*frame_orientations[f_idx])
                 anim_actor.SetPosition(pos[0], pos[1], pos[2])
                 img = plotter.screenshot(return_img=True)
@@ -217,15 +256,14 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
             imageio.mimsave(save_animation, frames, fps=30, loop=0)
             print(f"Animation saved to {save_animation}")
         else:
-            # Interactive animation: use VTK timer (no explicit render() calls)
-            # VTK auto-renders when actor positions change in timer callbacks
-            frame_index = [0]  # mutable counter for closure
+            # Interactive animation: use VTK timer
+            frame_index = [0]
             
             def update_frame(step):
-                i = frame_indices[frame_index[0] % n_frames]
-                pos = frame_positions[frame_index[0] % n_frames]
-                if model is not None:
-                    anim_actor.SetOrientation(*frame_orientations[frame_index[0] % n_frames])
+                f_idx = frame_index[0] % n_frames
+                pos = frame_positions[f_idx]
+                if has_orientation:
+                    anim_actor.SetOrientation(*frame_orientations[f_idx])
                 anim_actor.SetPosition(pos[0], pos[1], pos[2])
                 frame_index[0] += 1
             
@@ -248,7 +286,8 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
 
 def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     title=None, background='white', off_screen=False,
-                    return_plotter=False, animate=False, save_animation=None):
+                    return_plotter=False, animate=False, save_animation=None,
+                    radians=False, order='pyr'):
     """Plot multiple trajectories in the same 3D scene, optionally with 3D models.
     
     Parameters
@@ -260,6 +299,7 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
         - 'line_width': int (default 2)
         - 'label': str (legend label)
         - 'pitch_col', 'yaw_col', 'roll_col': int (orientation columns)
+        - 'radians': bool (per-trajectory override)
     models : list of dict, optional
         Each dict specifies a 3D model to animate:
         - 'path': str (path to .mat model file)
@@ -273,6 +313,10 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
     return_plotter : bool, default False
     animate : bool, default False
     save_animation : str, optional
+    radians : bool, default False
+        If True, input angles are in radians. Default is degrees.
+    order : str, default 'pyr'
+        Column order for orientation data.
     
     Returns
     -------
@@ -283,9 +327,11 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
     
     # Compute global bounds for consistent scaling
     all_points = []
+    all_infos = []
     for traj in trajectories:
-        pts = load_trajectory(traj['data'])
+        pts, _, info = load_trajectory(traj['data'])
         all_points.append(pts)
+        all_infos.append(info)
     
     global_min = np.min([np.min(p, axis=0) for p in all_points], axis=0)
     global_max = np.max([np.max(p, axis=0) for p in all_points], axis=0)
@@ -299,14 +345,17 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
     # Store spline data for animation
     spline_data = []
     
-    for idx, (traj, points) in enumerate(zip(trajectories, all_points)):
+    for idx, (traj, points, info) in enumerate(zip(trajectories, all_points, all_infos)):
         color = traj.get('color', None)
         colormap = traj.get('colormap', None)
         line_width = traj.get('line_width', 2)
         label = traj.get('label', None)
-        pitch_col = traj.get('pitch_col', 3)
-        yaw_col = traj.get('yaw_col', 4)
-        roll_col = traj.get('roll_col', 5)
+        
+        # Get column indices from auto-detection or user override
+        col_map = info.get('col_map', {})
+        pitch_col = traj.get('pitch_col', col_map.get('pitch', 3))
+        yaw_col = traj.get('yaw_col', col_map.get('yaw', 4))
+        roll_col = traj.get('roll_col', col_map.get('roll', 5))
         
         # Load full data for orientation
         data = traj['data']
@@ -316,7 +365,8 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
             if path.suffix.lower() == '.mat':
                 full_data = load_mat(path)
             else:
-                full_data = load_csv(path)[0]
+                full_data, _, _ = load_csv(path)
+                full_data = full_data[0]  # points array
         else:
             full_data = points
         
@@ -360,6 +410,7 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
             'pitch_col': pitch_col,
             'yaw_col': yaw_col,
             'roll_col': roll_col,
+            'from_mat': info.get('from_mat', False),
         })
     
     # Grid
@@ -424,22 +475,29 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                 scale_factor = target_size / model_size if model_size > 0 else 1.0
                 
                 model_center = np.array(model_mesh.center)
-                model_mesh.translate(-model_center, inplace=True)
-                model_mesh.scale([scale_factor, scale_factor, scale_factor], inplace=True)
+                model_mesh = model_mesh.translate(-model_center)
+                model_mesh = model_mesh.scale([scale_factor, scale_factor, scale_factor])
                 
                 actor = plotter.add_mesh(
-                    model_mesh, color=model_color, smooth_shading=True,
-                    specular=0.3, specular_power=15
+                    model_mesh, color=model_color,
                 )
                 
                 # Pre-compute orientations
                 fd = sd['full_data']
-                if fd.shape[1] > max(sd['pitch_col'], sd['yaw_col'], sd['roll_col']):
-                    frame_orientations = np.column_stack([
-                        np.degrees(fd[frame_indices, sd['roll_col']]),
-                        np.degrees(fd[frame_indices, sd['pitch_col']]),
-                        np.degrees(fd[frame_indices, sd['yaw_col']]),
-                    ])
+                has_orient = (fd is not None and 
+                             fd.shape[1] > max(sd['pitch_col'], sd['yaw_col'], sd['roll_col']))
+                
+                if has_orient:
+                    pitch_angles = fd[frame_indices, sd['pitch_col']]
+                    yaw_angles = fd[frame_indices, sd['yaw_col']]
+                    roll_angles = fd[frame_indices, sd['roll_col']]
+                    
+                    if radians or sd['from_mat']:
+                        pitch_angles = np.degrees(pitch_angles)
+                        yaw_angles = np.degrees(yaw_angles)
+                        roll_angles = np.degrees(roll_angles)
+                    
+                    frame_orientations = np.column_stack([roll_angles, pitch_angles, yaw_angles])
                 else:
                     frame_orientations = np.zeros((n_frames, 3))
                 

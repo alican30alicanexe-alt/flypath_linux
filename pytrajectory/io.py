@@ -9,11 +9,13 @@ from pathlib import Path
 from scipy.io import loadmat
 
 
-def load_csv(filepath, x_col=None, y_col=None, z_col=None):
+def load_csv(filepath, x_col=None, y_col=None, z_col=None,
+             pitch_col=None, yaw_col=None, roll_col=None):
     """Load trajectory data from a CSV file.
     
     Automatically detects x, y, z columns by name (case-insensitive),
     looking for common patterns like 'x', 'X', 'pos_x', 'x_pos', etc.
+    Also auto-detects pitch, yaw, roll columns if present.
     
     Parameters
     ----------
@@ -25,12 +27,19 @@ def load_csv(filepath, x_col=None, y_col=None, z_col=None):
         Name of the y-coordinate column. Auto-detected if not provided.
     z_col : str, optional
         Name of the z-coordinate column. Auto-detected if not provided.
+    pitch_col : str, optional
+        Name of the pitch column. Auto-detected if not provided.
+    yaw_col : str, optional
+        Name of the yaw column. Auto-detected if not provided.
+    roll_col : str, optional
+        Name of the roll column. Auto-detected if not provided.
     
     Returns
     -------
-    tuple of (np.ndarray, pd.DataFrame)
+    tuple of (np.ndarray, pd.DataFrame, dict)
         points : (N, 3) array of [x, y, z] coordinates
         dataframe : full pandas DataFrame with all columns
+        col_map : dict with keys 'pitch', 'yaw', 'roll' mapping to column names (or None)
     """
     filepath = Path(filepath)
     if not filepath.exists():
@@ -39,8 +48,6 @@ def load_csv(filepath, x_col=None, y_col=None, z_col=None):
     df = pd.read_csv(filepath)
     
     # Auto-detect columns if not specified
-    col_names = [c.lower() for c in df.columns]
-    
     if x_col is None:
         x_col = _find_column(df, ['x', 'pos_x', 'x_pos', 'position_x', 'x_coord', 'x_coordinate'])
     if y_col is None:
@@ -55,8 +62,18 @@ def load_csv(filepath, x_col=None, y_col=None, z_col=None):
             f"Available columns: {list(df.columns)}"
         )
     
+    # Auto-detect orientation columns
+    if pitch_col is None:
+        pitch_col = _find_column(df, ['pitch', 'theta', 'pitch_angle', 'elevation'])
+    if yaw_col is None:
+        yaw_col = _find_column(df, ['yaw', 'psi', 'yaw_angle', 'heading', 'azimuth'])
+    if roll_col is None:
+        roll_col = _find_column(df, ['roll', 'phi', 'roll_angle', 'bank'])
+    
+    col_map = {'pitch': pitch_col, 'yaw': yaw_col, 'roll': roll_col}
+    
     points = np.column_stack([df[x_col].values, df[y_col].values, df[z_col].values])
-    return points, df
+    return points, df, col_map
 
 
 def load_mat(filepath, x_key='x', y_key='y', z_key='z'):
@@ -144,14 +161,31 @@ def load_trajectory(data):
     
     Returns
     -------
-    np.ndarray : (N, 3) array of [x, y, z] coordinates
+    tuple of (np.ndarray, np.ndarray or None, dict)
+        points : (N, 3) array of [x, y, z] coordinates
+        full_data : (N, M) array with all columns, or None if numpy input
+        info : dict with keys:
+            - 'col_map': dict mapping 'pitch'/'yaw'/'roll' to column indices (or None)
+            - 'from_mat': bool, True if loaded from .mat file
     """
     if isinstance(data, (str, Path)):
         path = Path(data)
         if path.suffix.lower() == '.mat':
-            return load_mat(path)
-        return load_csv(path)[0]
-    return np.asarray(data, dtype=float)
+            points = load_mat(path)
+            # .mat files use aerospace standard: col 4=pitch, col 5=yaw, col 6=roll
+            col_map = {'pitch': 3, 'yaw': 4, 'roll': 5}
+            return points, points, {'col_map': col_map, 'from_mat': True}
+        
+        points, df, col_map = load_csv(path)
+        # Map detected column names to indices
+        col_indices = {}
+        for key, col_name in col_map.items():
+            if col_name is not None and col_name in df.columns:
+                col_indices[key] = list(df.columns).index(col_name)
+        return points, df.values, {'col_map': col_indices, 'from_mat': False}
+    
+    arr = np.asarray(data, dtype=float)
+    return arr, None, {'col_map': {}, 'from_mat': False}
 
 
 def load_3d_model(filepath):
