@@ -129,8 +129,10 @@ def load_mat(filepath, x_key='x', y_key='y', z_key='z'):
         x = np.asarray(mat[x_key_found]).flatten()
         y = np.asarray(mat[y_key_found]).flatten()
         z = np.asarray(mat[z_key_found]).flatten()
+        min_len = min(len(x), len(y), len(z))
+        return np.column_stack([x[:min_len], y[:min_len], z[:min_len]])
     else:
-        # Fallback: use first 3 columns of first 2D array variable
+        # Fallback: use the first 2D array variable (may have 3+ columns)
         arr_var = None
         for k in available_keys:
             v = mat[k]
@@ -142,13 +144,7 @@ def load_mat(filepath, x_key='x', y_key='y', z_key='z'):
                 f"Could not find x, y, z arrays or a suitable 2D matrix in .mat file. "
                 f"Available variables: {available_keys}"
             )
-        x = arr_var[:, 0]
-        y = arr_var[:, 1]
-        z = arr_var[:, 2]
-    
-    min_len = min(len(x), len(y), len(z))
-    points = np.column_stack([x[:min_len], y[:min_len], z[:min_len]])
-    return points
+        return arr_var
 
 
 def load_trajectory(data):
@@ -171,10 +167,15 @@ def load_trajectory(data):
     if isinstance(data, (str, Path)):
         path = Path(data)
         if path.suffix.lower() == '.mat':
-            points = load_mat(path)
-            # .mat files use aerospace standard: col 4=pitch, col 5=yaw, col 6=roll
-            col_map = {'pitch': 3, 'yaw': 4, 'roll': 5}
-            return points, points, {'col_map': col_map, 'from_mat': True}
+            full_data = load_mat(path)
+            # First 3 columns are x, y, z; rest may be pitch, yaw, roll
+            points = full_data[:, :3]
+            # Only set orientation columns if data has enough columns
+            if full_data.shape[1] >= 6:
+                col_map = {'pitch': 3, 'yaw': 4, 'roll': 5}
+            else:
+                col_map = {}
+            return points, full_data, {'col_map': col_map, 'from_mat': True}
         
         points, df, col_map = load_csv(path)
         # Map detected column names to indices
