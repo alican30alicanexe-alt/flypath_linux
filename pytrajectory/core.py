@@ -170,18 +170,15 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
             target_size = data_range * 0.05  # Model will be 5% of data range
             scale_factor = target_size / model_size if model_size > 0 else 1.0
             
-            # Center the model at origin
+            # Center the model at origin (create new mesh, avoid inplace to prevent VTK refcount issues)
             model_center = np.array(model_mesh.center)
-            model_mesh.translate(-model_center, inplace=True)
-            model_mesh.scale([scale_factor, scale_factor, scale_factor], inplace=True)
+            model_mesh = model_mesh.translate(-model_center)
+            model_mesh = model_mesh.scale([scale_factor, scale_factor, scale_factor])
             
-            # Add model to plotter
+            # Add model to plotter (no smooth_shading to avoid VTK normal computation issues)
             anim_actor = plotter.add_mesh(
-                model_mesh, color='gray', smooth_shading=True,
-                specular=0.3, specular_power=15
+                model_mesh, color='gray',
             )
-            # Keep reference to prevent Python GC from freeing mesh while VTK uses it
-            plotter._model_meshes = [model_mesh]
         else:
             # Animation sphere (same size as start/end markers)
             sphere_mesh = pv.Sphere(radius=marker_radius)

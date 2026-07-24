@@ -207,10 +207,12 @@ def load_3d_model(filepath):
         raise ValueError(f"Faces must be (M, 3) array, got shape {faces.shape}")
     
     # Create PyVista mesh
+    # MATLAB .mat files use 1-based indexing, VTK uses 0-based
     # PyVista expects faces in format: [n_points, v1, v2, v3, n_points, v1, v2, v3, ...]
     # where n_points is 3 for triangles
     n_faces = len(faces)
-    faces_pv = np.column_stack([np.full(n_faces, 3), faces]).flatten()
+    faces_0based = faces - 1  # Convert from MATLAB 1-based to VTK 0-based
+    faces_pv = np.column_stack([np.full(n_faces, 3), faces_0based]).flatten()
     
     mesh = pv.PolyData(vertices, faces_pv)
     
