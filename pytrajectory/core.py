@@ -158,11 +158,25 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
     end_mesh = pv.Sphere(radius=marker_radius, center=points[-1])
     plotter.add_mesh(end_mesh, color='red', smooth_shading=True)
     
-    # MATLAB-style boxed axes with grid
+    # Compute tight bounds with 10% padding
+    data_min = points.min(axis=0)
+    data_max = points.max(axis=0)
+    data_range_axes = data_max - data_min
+    padding = data_range_axes * 0.1  # 10% padding on each side
+    # Ensure minimum padding for flat trajectories (e.g., z=500 constant)
+    padding = np.maximum(padding, np.full(3, data_range * 0.02))
+    bounds = [
+        data_min[0] - padding[0], data_max[0] + padding[0],
+        data_min[1] - padding[1], data_max[1] + padding[1],
+        data_min[2] - padding[2], data_max[2] + padding[2],
+    ]
+    
+    # MATLAB-style boxed axes with grid and tight bounds
     if show_grid:
         plotter.show_grid(
             show_xaxis=show_axes, show_yaxis=show_axes, show_zaxis=show_axes,
             grid=True, location='outer', bold=True, font_size=10,
+            bounds=bounds,
         )
     
     # Set title
@@ -170,8 +184,18 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
         plotter.add_text(title, position='upper_edge', font_size=14,
                          color='black' if background == 'white' else 'white')
     
-    # Set isometric view
-    plotter.view_isometric()
+    # Set camera to focus on data center with appropriate distance
+    data_center = (data_min + data_max) / 2
+    max_range = max(data_range_axes)
+    plotter.camera_position = 'iso'
+    plotter.camera.focal_point = data_center
+    plotter.camera.position = (
+        data_center[0] + max_range * 1.5,
+        data_center[1] + max_range * 1.5,
+        data_center[2] + max_range * 1.5,
+    )
+    plotter.camera.view_up = (0, 0, 1)
+    plotter.camera.zoom(0.9)
     
     # Add axes labels
     if show_axes:
