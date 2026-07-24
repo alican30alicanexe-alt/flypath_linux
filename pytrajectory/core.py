@@ -202,36 +202,23 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
         if model is not None:
             anim_actor.SetOrientation(*frame_orientations[0])
         
+        # Render frames using screenshot (implicitly renders, no explicit render() call)
+        import imageio
+        frames = []
+        for f_idx in range(n_frames):
+            pos = frame_positions[f_idx]
+            if model is not None:
+                anim_actor.SetOrientation(*frame_orientations[f_idx])
+            anim_actor.SetPosition(pos[0], pos[1], pos[2])
+            # screenshot() implicitly calls render() internally
+            img = plotter.screenshot(return_img=True)
+            frames.append(img)
+        
         if save_animation is not None:
-            # Save animation as GIF using screenshots (always offscreen)
-            import imageio
-            frames = []
-            for f_idx in range(n_frames):
-                pos = frame_positions[f_idx]
-                if model is not None:
-                    anim_actor.SetOrientation(*frame_orientations[f_idx])
-                anim_actor.SetPosition(pos[0], pos[1], pos[2])
-                plotter.render()
-                img = plotter.screenshot(return_img=True)
-                frames.append(img)
             imageio.mimsave(save_animation, frames, fps=30, loop=0)
             print(f"Animation saved to {save_animation}")
         else:
-            # Render animation frames to screen using offscreen rendering
-            # then close and show nothing (to avoid VTK GUI re-entrancy crashes)
-            import imageio
-            import io
-            frames = []
-            for f_idx in range(n_frames):
-                pos = frame_positions[f_idx]
-                if model is not None:
-                    anim_actor.SetOrientation(*frame_orientations[f_idx])
-                anim_actor.SetPosition(pos[0], pos[1], pos[2])
-                plotter.render()
-                img = plotter.screenshot(return_img=True)
-                frames.append(img)
-            
-            # Display animation using matplotlib (safe, no VTK GUI)
+            # Display using matplotlib (safe, no VTK GUI)
             try:
                 import matplotlib.pyplot as plt
                 import matplotlib.animation as animation
@@ -246,7 +233,6 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
                 plt.show()
                 plt.close(fig)
             except ImportError:
-                # Fallback: just save to a temp file and print message
                 temp_gif = '/tmp/pytrajectory_anim.gif'
                 imageio.mimsave(temp_gif, frames, fps=30, loop=0)
                 print(f"Animation saved to {temp_gif}")
@@ -412,7 +398,11 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
         frame_data = []
         for idx, (traj, sd) in enumerate(zip(trajectories, spline_data)):
             sp_traj = sd['spline'].points
-            frame_positions = sp_traj[frame_indices]
+            # Use each trajectory's own spline length for frame indices
+            n_local = len(sp_traj)
+            local_frames = min(n_frames, n_local)
+            local_indices = np.linspace(0, n_local - 1, local_frames, dtype=int)
+            frame_positions = sp_traj[local_indices]
             
             # Check if a model is assigned to this trajectory
             assigned_model = None
@@ -486,7 +476,7 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                 if fd['is_model']:
                     fd['actor'].SetOrientation(*fd['orientations'][f_idx])
                 fd['actor'].SetPosition(pos[0], pos[1], pos[2])
-            plotter.render()
+            # screenshot() implicitly calls render()
             img = plotter.screenshot(return_img=True)
             frames.append(img)
         
