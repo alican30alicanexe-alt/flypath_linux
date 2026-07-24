@@ -174,8 +174,8 @@ def main():
         help='Animate sphere moving along the trajectory (completes in ~3 sec)'
     )
     parser.add_argument(
-        '--aircraft', default=None,
-        help='Path to .mat file with 3D aircraft/missile model (V, F, C arrays)'
+        '--model', default=None,
+        help='Path to .mat file with 3D model (V, F, C arrays)'
     )
     parser.add_argument(
         '--pitch-col', type=int, default=3,
@@ -271,7 +271,7 @@ def main():
             off_screen=args.off_screen,
             animate=args.animate,
             save_animation=args.save_animation,
-            model=args.aircraft,
+            model=args.model,
             pitch_col=args.pitch_col,
             yaw_col=args.yaw_col,
             roll_col=args.roll_col,

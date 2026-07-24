@@ -180,8 +180,8 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
                 specular=0.3, specular_power=15
             )
             
-            # Create transform for rotation
-            transform = pv.Transform()
+            # Create transform for rotation and store on actor to prevent GC
+            model_actor._transform = pv.Transform()
             
             def update_frame(step):
                 """Move and rotate model via actor transform."""
@@ -199,13 +199,13 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
                     pitch, yaw, roll = 0, 0, 0
                 
                 # Apply rotations in order: pitch, yaw, roll
-                transform.identity()
-                transform.rotate_x(pitch)  # pitch around X axis
-                transform.rotate_z(yaw)    # yaw around Z axis
-                transform.rotate_y(roll)   # roll around Y axis
+                model_actor._transform.identity()
+                model_actor._transform.rotate_x(pitch)  # pitch around X axis
+                model_actor._transform.rotate_z(yaw)    # yaw around Z axis
+                model_actor._transform.rotate_y(roll)   # roll around Y axis
                 
                 # Update actor transform
-                model_actor.SetUserTransform(transform)
+                model_actor.SetUserTransform(model_actor._transform)
                 model_actor.SetPosition(pos[0], pos[1], pos[2])
                 plotter.render()
         else:
@@ -426,10 +426,10 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     model_mesh, color=model_color, smooth_shading=True,
                     specular=0.3, specular_power=15
                 )
-                transform = pv.Transform()
+                # Store transform on actor to prevent garbage collection
+                actor._transform = pv.Transform()
                 actors.append({
                     'actor': actor,
-                    'transform': transform,
                     'spline_points': sp_traj,
                     'full_data': sd['full_data'],
                     'pitch_col': sd['pitch_col'],
@@ -468,12 +468,12 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     else:
                         pitch, yaw, roll = 0, 0, 0
                     
-                    act['transform'].identity()
-                    act['transform'].rotate_x(pitch)
-                    act['transform'].rotate_z(yaw)
-                    act['transform'].rotate_y(roll)
+                    act['actor']._transform.identity()
+                    act['actor']._transform.rotate_x(pitch)
+                    act['actor']._transform.rotate_z(yaw)
+                    act['actor']._transform.rotate_y(roll)
                     
-                    act['actor'].SetUserTransform(act['transform'])
+                    act['actor'].SetUserTransform(act['actor']._transform)
                     act['actor'].SetPosition(pos[0], pos[1], pos[2])
                 else:
                     act['actor'].SetPosition(pos[0], pos[1], pos[2])

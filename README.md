@@ -36,7 +36,7 @@ pytrajectory examples/sample_data.csv --colormap viridis --title "My Trajectory"
 ### With animation and 3D model
 
 ```bash
-pytrajectory examples/sample_data.csv --animate --aircraft models/f-16.mat
+pytrajectory examples/sample_data.csv --animate --model models/f-16.mat
 ```
 
 ### Multiple trajectories
