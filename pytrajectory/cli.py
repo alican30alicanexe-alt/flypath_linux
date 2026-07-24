@@ -206,6 +206,18 @@ def main():
         help='Scale factor for 3D model size (default: 1.0)'
     )
     parser.add_argument(
+        '--xlim', type=float, nargs=2, default=None,
+        help='X-axis limits: min max (e.g., --xlim 0 1000)'
+    )
+    parser.add_argument(
+        '--ylim', type=float, nargs=2, default=None,
+        help='Y-axis limits: min max (e.g., --ylim 10000 15000)'
+    )
+    parser.add_argument(
+        '--zlim', type=float, nargs=2, default=None,
+        help='Z-axis limits: min max (e.g., --zlim 0 500)'
+    )
+    parser.add_argument(
         '--save-animation', default=None,
         help='Save animation as a GIF file'
     )
@@ -295,6 +307,9 @@ def main():
             order=args.order,
             speed=args.speed,
             model_scale=args.model_scale,
+            xlim=args.xlim,
+            ylim=args.ylim,
+            zlim=args.zlim,
         )
         return
 

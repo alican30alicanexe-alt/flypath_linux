@@ -38,7 +38,8 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
               background='white', off_screen=False, return_plotter=False,
               animate=False, save_animation=None,
               model=None, pitch_col=3, yaw_col=4, roll_col=5,
-              radians=False, order='pyr', speed=3.0, model_scale=1.0):
+              radians=False, order='pyr', speed=3.0, model_scale=1.0,
+              xlim=None, ylim=None, zlim=None):
     """MATLAB-like 3D trajectory plot with precision axis scaling.
     
     Renders a 3D trajectory with proper equal aspect ratio, MATLAB-style
@@ -158,18 +159,36 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
     end_mesh = pv.Sphere(radius=marker_radius, center=points[-1])
     plotter.add_mesh(end_mesh, color='red', smooth_shading=True)
     
-    # Compute tight bounds with 10% padding
+    # Compute tight bounds with 10% padding (or use manual limits if provided)
     data_min = points.min(axis=0)
     data_max = points.max(axis=0)
     data_range_axes = data_max - data_min
-    padding = data_range_axes * 0.1  # 10% padding on each side
-    # Ensure minimum padding for flat trajectories (e.g., z=500 constant)
-    padding = np.maximum(padding, np.full(3, data_range * 0.02))
-    bounds = [
-        data_min[0] - padding[0], data_max[0] + padding[0],
-        data_min[1] - padding[1], data_max[1] + padding[1],
-        data_min[2] - padding[2], data_max[2] + padding[2],
-    ]
+    
+    if xlim is not None:
+        x_min, x_max = xlim
+    else:
+        x_padding = data_range_axes[0] * 0.1
+        x_padding = max(x_padding, data_range * 0.02)
+        x_min = data_min[0] - x_padding
+        x_max = data_max[0] + x_padding
+    
+    if ylim is not None:
+        y_min, y_max = ylim
+    else:
+        y_padding = data_range_axes[1] * 0.1
+        y_padding = max(y_padding, data_range * 0.02)
+        y_min = data_min[1] - y_padding
+        y_max = data_max[1] + y_padding
+    
+    if zlim is not None:
+        z_min, z_max = zlim
+    else:
+        z_padding = data_range_axes[2] * 0.1
+        z_padding = max(z_padding, data_range * 0.02)
+        z_min = data_min[2] - z_padding
+        z_max = data_max[2] + z_padding
+    
+    bounds = [x_min, x_max, y_min, y_max, z_min, z_max]
     
     # MATLAB-style boxed axes with grid and tight bounds
     if show_grid:
