@@ -180,6 +180,8 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
                 model_mesh, color='gray', smooth_shading=True,
                 specular=0.3, specular_power=15
             )
+            # Keep reference to prevent Python GC from freeing mesh while VTK uses it
+            plotter._model_meshes = [model_mesh]
         else:
             # Animation sphere (same size as start/end markers)
             sphere_mesh = pv.Sphere(radius=marker_radius)
