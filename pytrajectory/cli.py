@@ -198,6 +198,10 @@ def main():
         help='Column order for orientation: "pyr"=pitch(3)/yaw(4)/roll(5) (default)'
     )
     parser.add_argument(
+        '--speed', type=float, default=3.0,
+        help='Animation duration in seconds (default: 3.0)'
+    )
+    parser.add_argument(
         '--save-animation', default=None,
         help='Save animation as a GIF file'
     )
@@ -285,6 +289,7 @@ def main():
             roll_col=args.roll_col,
             radians=args.rad,
             order=args.order,
+            speed=args.speed,
         )
         return
 
