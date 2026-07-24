@@ -175,60 +175,63 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
             model_mesh.scale([scale_factor, scale_factor, scale_factor], inplace=True)
             
             # Add model to plotter
-            model_actor = plotter.add_mesh(
+            anim_actor = plotter.add_mesh(
                 model_mesh, color='gray', smooth_shading=True,
                 specular=0.3, specular_power=15
             )
-            
-            def update_frame(step):
-                """Move and rotate model via actor transform."""
-                i = frame_indices[step % n_frames]
-                pos = sp[i]
-                
-                # Get orientation angles from full trajectory data
-                if full_data.shape[1] > max(pitch_col, yaw_col, roll_col):
-                    # Angles are in radians, convert to degrees
-                    pitch = np.degrees(full_data[i, pitch_col])
-                    yaw = np.degrees(full_data[i, yaw_col])
-                    roll = np.degrees(full_data[i, roll_col])
-                else:
-                    # No orientation data available
-                    pitch, yaw, roll = 0, 0, 0
-                
-                # Use VTK native orientation (avoids Python transform GC issues)
-                # VTK SetOrientation uses intrinsic rotations: roll, pitch, yaw
-                model_actor.SetOrientation(roll, pitch, yaw)
-                model_actor.SetPosition(pos[0], pos[1], pos[2])
-                plotter.render()
         else:
             # Animation sphere (same size as start/end markers)
             sphere_mesh = pv.Sphere(radius=marker_radius)
-            sphere_actor = plotter.add_mesh(
+            anim_actor = plotter.add_mesh(
                 sphere_mesh, color='yellow', smooth_shading=True,
                 specular=0.5, specular_power=20
             )
-            sphere_actor.SetPosition(orig[0], orig[1], orig[2])
-            
-            def update_frame(step):
-                """Move sphere via actor transform."""
-                i = frame_indices[step % n_frames]
-                pos = sp[i]
-                sphere_actor.SetPosition(pos[0], pos[1], pos[2])
-                plotter.render()
+            anim_actor.SetPosition(orig[0], orig[1], orig[2])
         
-        # Animation completes in ~3 seconds
-        duration_ms = max(10, 3000 // n_frames)
+        # Pre-compute all frame positions and orientations
+        frame_positions = sp[frame_indices]
+        if model is not None and full_data.shape[1] > max(pitch_col, yaw_col, roll_col):
+            frame_orientations = np.column_stack([
+                np.degrees(full_data[frame_indices, roll_col]),
+                np.degrees(full_data[frame_indices, pitch_col]),
+                np.degrees(full_data[frame_indices, yaw_col]),
+            ])
+        else:
+            frame_orientations = np.zeros((n_frames, 3))
         
         if save_animation is not None:
-            plotter.open_movie(save_animation, framerate=30)
-        
-        # Use large max_steps so animation loops continuously
-        plotter.add_timer_event(100000, duration_ms, update_frame)
+            # Save animation as GIF using imageio
+            import imageio
+            plotter.show(auto_close=False)
+            frames = []
+            for f_idx in range(n_frames):
+                pos = frame_positions[f_idx]
+                if model is not None:
+                    anim_actor.SetOrientation(*frame_orientations[f_idx])
+                anim_actor.SetPosition(pos[0], pos[1], pos[2])
+                plotter.render()
+                img = plotter.screenshot(return_img=True)
+                frames.append(img)
+            plotter.close()
+            imageio.mimsave(save_animation, frames, fps=30, loop=0)
+            print(f"Animation saved to {save_animation}")
+        else:
+            # Interactive animation
+            plotter.show(auto_close=False)
+            import time
+            start_time = time.time()
+            while time.time() - start_time < 3.0:
+                for f_idx in range(n_frames):
+                    pos = frame_positions[f_idx]
+                    if model is not None:
+                        anim_actor.SetOrientation(*frame_orientations[f_idx])
+                    anim_actor.SetPosition(pos[0], pos[1], pos[2])
+                    plotter.render()
+                    time.sleep(0.001)
+            plotter.close()
         
         if return_plotter:
             return plotter
-        if not off_screen and save_animation is None:
-            plotter.show()
         return None
     
     if return_plotter:
@@ -383,10 +386,11 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
         n_frames = min(90, n_spline)
         frame_indices = np.linspace(0, n_spline - 1, n_frames, dtype=int)
         
-        # Setup models or spheres for each trajectory
-        actors = []
+        # Pre-compute all frame data for each actor
+        frame_data = []
         for idx, (traj, sd) in enumerate(zip(trajectories, spline_data)):
             sp_traj = sd['spline'].points
+            frame_positions = sp_traj[frame_indices]
             
             # Check if a model is assigned to this trajectory
             assigned_model = None
@@ -418,13 +422,22 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     model_mesh, color=model_color, smooth_shading=True,
                     specular=0.3, specular_power=15
                 )
-                actors.append({
+                
+                # Pre-compute orientations
+                fd = sd['full_data']
+                if fd.shape[1] > max(sd['pitch_col'], sd['yaw_col'], sd['roll_col']):
+                    frame_orientations = np.column_stack([
+                        np.degrees(fd[frame_indices, sd['roll_col']]),
+                        np.degrees(fd[frame_indices, sd['pitch_col']]),
+                        np.degrees(fd[frame_indices, sd['yaw_col']]),
+                    ])
+                else:
+                    frame_orientations = np.zeros((n_frames, 3))
+                
+                frame_data.append({
                     'actor': actor,
-                    'spline_points': sp_traj,
-                    'full_data': sd['full_data'],
-                    'pitch_col': sd['pitch_col'],
-                    'yaw_col': sd['yaw_col'],
-                    'roll_col': sd['roll_col'],
+                    'positions': frame_positions,
+                    'orientations': frame_orientations,
                     'is_model': True,
                 })
             else:
@@ -437,45 +450,45 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     sphere_mesh, color=sphere_color, smooth_shading=True,
                     specular=0.5, specular_power=20
                 )
-                actor.SetPosition(sp_traj[0][0], sp_traj[0][1], sp_traj[0][2])
-                actors.append({
+                frame_data.append({
                     'actor': actor,
-                    'spline_points': sp_traj,
+                    'positions': frame_positions,
                     'is_model': False,
                 })
         
-        def update_frame(step):
-            """Update all actors for current frame."""
-            i = frame_indices[step % n_frames]
-            for act in actors:
-                pos = act['spline_points'][i]
-                if act['is_model']:
-                    fd = act['full_data']
-                    if fd.shape[1] > max(act['pitch_col'], act['yaw_col'], act['roll_col']):
-                        pitch = np.degrees(fd[i, act['pitch_col']])
-                        yaw = np.degrees(fd[i, act['yaw_col']])
-                        roll = np.degrees(fd[i, act['roll_col']])
-                    else:
-                        pitch, yaw, roll = 0, 0, 0
-                    
-                    # Use VTK native orientation (avoids Python transform GC issues)
-                    act['actor'].SetOrientation(roll, pitch, yaw)
-                    act['actor'].SetPosition(pos[0], pos[1], pos[2])
-                else:
-                    act['actor'].SetPosition(pos[0], pos[1], pos[2])
-                plotter.render()
-        
-        duration_ms = max(10, 3000 // n_frames)
-        
         if save_animation is not None:
-            plotter.open_movie(save_animation, framerate=30)
-        
-        plotter.add_timer_event(100000, duration_ms, update_frame)
+            import imageio
+            plotter.show(auto_close=False)
+            frames = []
+            for f_idx in range(n_frames):
+                for fd in frame_data:
+                    pos = fd['positions'][f_idx]
+                    if fd['is_model']:
+                        fd['actor'].SetOrientation(*fd['orientations'][f_idx])
+                    fd['actor'].SetPosition(pos[0], pos[1], pos[2])
+                plotter.render()
+                img = plotter.screenshot(return_img=True)
+                frames.append(img)
+            plotter.close()
+            imageio.mimsave(save_animation, frames, fps=30, loop=0)
+            print(f"Animation saved to {save_animation}")
+        else:
+            plotter.show(auto_close=False)
+            import time
+            start_time = time.time()
+            while time.time() - start_time < 3.0:
+                for f_idx in range(n_frames):
+                    for fd in frame_data:
+                        pos = fd['positions'][f_idx]
+                        if fd['is_model']:
+                            fd['actor'].SetOrientation(*fd['orientations'][f_idx])
+                        fd['actor'].SetPosition(pos[0], pos[1], pos[2])
+                    plotter.render()
+                    time.sleep(0.001)
+            plotter.close()
         
         if return_plotter:
             return plotter
-        if not off_screen and save_animation is None:
-            plotter.show()
         return None
     
     if return_plotter:
