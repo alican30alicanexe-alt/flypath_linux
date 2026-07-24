@@ -168,7 +168,7 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
         x_min, x_max = xlim
     else:
         x_padding = data_range_axes[0] * 0.1
-        x_padding = max(x_padding, data_range * 0.02)
+        x_padding = max(x_padding, data_range * 0.01)
         x_min = data_min[0] - x_padding
         x_max = data_max[0] + x_padding
     
@@ -176,7 +176,7 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
         y_min, y_max = ylim
     else:
         y_padding = data_range_axes[1] * 0.1
-        y_padding = max(y_padding, data_range * 0.02)
+        y_padding = max(y_padding, data_range * 0.01)
         y_min = data_min[1] - y_padding
         y_max = data_max[1] + y_padding
     
@@ -184,7 +184,7 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
         z_min, z_max = zlim
     else:
         z_padding = data_range_axes[2] * 0.1
-        z_padding = max(z_padding, data_range * 0.02)
+        z_padding = max(z_padding, data_range * 0.01)
         z_min = data_min[2] - z_padding
         z_max = data_max[2] + z_padding
     
