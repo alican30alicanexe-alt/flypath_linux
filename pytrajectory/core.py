@@ -86,8 +86,8 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
     use_color = color if color is not None else 'blue'
     use_colormap = colormap if colormap is not None else None
     
-    # Create plotter
-    plotter = pv.Plotter(off_screen=off_screen or save_animation is not None)
+    # Create plotter (force offscreen for animation to avoid VTK GUI crashes)
+    plotter = pv.Plotter(off_screen=off_screen or animate or save_animation is not None)
     plotter.background_color = background
     
     # Create trajectory line as a spline for smoothness
@@ -152,7 +152,6 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
         # Use fixed ~90 frames for consistent ~3 second animation
         n_frames = min(90, n_spline)
         frame_indices = np.linspace(0, n_spline - 1, n_frames, dtype=int)
-        orig = sp[0]
         
         # Load 3D model if provided, otherwise use sphere
         if model is not None:
@@ -186,7 +185,6 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
                 sphere_mesh, color='yellow', smooth_shading=True,
                 specular=0.5, specular_power=20
             )
-            anim_actor.SetPosition(orig[0], orig[1], orig[2])
         
         # Pre-compute all frame positions and orientations
         frame_positions = sp[frame_indices]
@@ -199,10 +197,14 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
         else:
             frame_orientations = np.zeros((n_frames, 3))
         
+        # Set initial position
+        anim_actor.SetPosition(frame_positions[0][0], frame_positions[0][1], frame_positions[0][2])
+        if model is not None:
+            anim_actor.SetOrientation(*frame_orientations[0])
+        
         if save_animation is not None:
-            # Save animation as GIF using imageio
+            # Save animation as GIF using screenshots (always offscreen)
             import imageio
-            plotter.show(auto_close=False)
             frames = []
             for f_idx in range(n_frames):
                 pos = frame_positions[f_idx]
@@ -212,23 +214,43 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
                 plotter.render()
                 img = plotter.screenshot(return_img=True)
                 frames.append(img)
-            plotter.close()
             imageio.mimsave(save_animation, frames, fps=30, loop=0)
             print(f"Animation saved to {save_animation}")
         else:
-            # Interactive animation
-            plotter.show(auto_close=False)
-            import time
-            start_time = time.time()
-            while time.time() - start_time < 3.0:
-                for f_idx in range(n_frames):
-                    pos = frame_positions[f_idx]
-                    if model is not None:
-                        anim_actor.SetOrientation(*frame_orientations[f_idx])
-                    anim_actor.SetPosition(pos[0], pos[1], pos[2])
-                    plotter.render()
-                    time.sleep(0.001)
-            plotter.close()
+            # Render animation frames to screen using offscreen rendering
+            # then close and show nothing (to avoid VTK GUI re-entrancy crashes)
+            import imageio
+            import io
+            frames = []
+            for f_idx in range(n_frames):
+                pos = frame_positions[f_idx]
+                if model is not None:
+                    anim_actor.SetOrientation(*frame_orientations[f_idx])
+                anim_actor.SetPosition(pos[0], pos[1], pos[2])
+                plotter.render()
+                img = plotter.screenshot(return_img=True)
+                frames.append(img)
+            
+            # Display animation using matplotlib (safe, no VTK GUI)
+            try:
+                import matplotlib.pyplot as plt
+                import matplotlib.animation as animation
+                fig, ax = plt.subplots(figsize=(10, 8))
+                ax.axis('off')
+                im = ax.imshow(frames[0])
+                def update_frame(frame_idx):
+                    im.set_data(frames[frame_idx])
+                    return [im]
+                ani = animation.FuncAnimation(fig, update_frame, frames=n_frames, 
+                                               interval=33, blit=True, repeat=True)
+                plt.show()
+                plt.close(fig)
+            except ImportError:
+                # Fallback: just save to a temp file and print message
+                temp_gif = '/tmp/pytrajectory_anim.gif'
+                imageio.mimsave(temp_gif, frames, fps=30, loop=0)
+                print(f"Animation saved to {temp_gif}")
+                print("Install matplotlib for interactive display")
         
         if return_plotter:
             return plotter
@@ -287,8 +309,8 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
     global_max = np.max([np.max(p, axis=0) for p in all_points], axis=0)
     global_range = np.max(global_max - global_min)
     
-    # Create plotter
-    plotter = pv.Plotter(off_screen=off_screen or save_animation is not None)
+    # Create plotter (force offscreen for animation to avoid VTK GUI crashes)
+    plotter = pv.Plotter(off_screen=off_screen or animate or save_animation is not None)
     plotter.background_color = background
     
     # Store spline data for animation
@@ -456,36 +478,41 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     'is_model': False,
                 })
         
+        import imageio
+        frames = []
+        for f_idx in range(n_frames):
+            for fd in frame_data:
+                pos = fd['positions'][f_idx]
+                if fd['is_model']:
+                    fd['actor'].SetOrientation(*fd['orientations'][f_idx])
+                fd['actor'].SetPosition(pos[0], pos[1], pos[2])
+            plotter.render()
+            img = plotter.screenshot(return_img=True)
+            frames.append(img)
+        
         if save_animation is not None:
-            import imageio
-            plotter.show(auto_close=False)
-            frames = []
-            for f_idx in range(n_frames):
-                for fd in frame_data:
-                    pos = fd['positions'][f_idx]
-                    if fd['is_model']:
-                        fd['actor'].SetOrientation(*fd['orientations'][f_idx])
-                    fd['actor'].SetPosition(pos[0], pos[1], pos[2])
-                plotter.render()
-                img = plotter.screenshot(return_img=True)
-                frames.append(img)
-            plotter.close()
             imageio.mimsave(save_animation, frames, fps=30, loop=0)
             print(f"Animation saved to {save_animation}")
         else:
-            plotter.show(auto_close=False)
-            import time
-            start_time = time.time()
-            while time.time() - start_time < 3.0:
-                for f_idx in range(n_frames):
-                    for fd in frame_data:
-                        pos = fd['positions'][f_idx]
-                        if fd['is_model']:
-                            fd['actor'].SetOrientation(*fd['orientations'][f_idx])
-                        fd['actor'].SetPosition(pos[0], pos[1], pos[2])
-                    plotter.render()
-                    time.sleep(0.001)
-            plotter.close()
+            # Display using matplotlib (safe, no VTK GUI)
+            try:
+                import matplotlib.pyplot as plt
+                import matplotlib.animation as animation
+                fig, ax = plt.subplots(figsize=(10, 8))
+                ax.axis('off')
+                im = ax.imshow(frames[0])
+                def update_frame(frame_idx):
+                    im.set_data(frames[frame_idx])
+                    return [im]
+                ani = animation.FuncAnimation(fig, update_frame, frames=n_frames, 
+                                               interval=33, blit=True, repeat=True)
+                plt.show()
+                plt.close(fig)
+            except ImportError:
+                temp_gif = '/tmp/pytrajectory_anim.gif'
+                imageio.mimsave(temp_gif, frames, fps=30, loop=0)
+                print(f"Animation saved to {temp_gif}")
+                print("Install matplotlib for interactive display")
         
         if return_plotter:
             return plotter
