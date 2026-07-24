@@ -23,7 +23,8 @@ def _compute_trajectory_heading(points):
     avg_dir = points[n_avg - 1] - points[0]
     
     # Yaw = atan2(dy, dx) in horizontal plane
-    yaw = np.degrees(np.arctan2(avg_dir[1], avg_dir[0]))
+    # Add 180° because models typically face -Z or need flipped heading
+    yaw = np.degrees(np.arctan2(avg_dir[1], avg_dir[0])) + 180
     
     # Pitch = atan2(dz, horizontal_distance)
     horiz_dist = np.linalg.norm(avg_dir[:2])
