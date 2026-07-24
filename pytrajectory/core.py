@@ -215,14 +215,19 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
         frame_positions = sp[frame_indices]
         
         # Get orientation data if available
+        # Use original data length (not spline length) for data indexing
+        n_data = len(full_data) if full_data is not None else 0
         has_orientation = (full_data is not None and 
-                          full_data.shape[1] > max(pitch_col, yaw_col, roll_col))
+                          n_data > max(pitch_col, yaw_col, roll_col))
         
         if has_orientation:
+            # Compute frame indices aligned to original data length
+            data_frame_indices = np.linspace(0, n_data - 1, n_frames, dtype=int)
+            
             # Extract angles from the specified columns
-            pitch_angles = full_data[frame_indices, pitch_col]
-            yaw_angles = full_data[frame_indices, yaw_col]
-            roll_angles = full_data[frame_indices, roll_col]
+            pitch_angles = full_data[data_frame_indices, pitch_col]
+            yaw_angles = full_data[data_frame_indices, yaw_col]
+            roll_angles = full_data[data_frame_indices, roll_col]
             
             # Convert radians to degrees if needed
             if radians or info.get('from_mat', False):
@@ -484,13 +489,16 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                 
                 # Pre-compute orientations
                 fd = sd['full_data']
+                n_data = len(fd) if fd is not None else 0
                 has_orient = (fd is not None and 
-                             fd.shape[1] > max(sd['pitch_col'], sd['yaw_col'], sd['roll_col']))
+                             n_data > max(sd['pitch_col'], sd['yaw_col'], sd['roll_col']))
                 
                 if has_orient:
-                    pitch_angles = fd[frame_indices, sd['pitch_col']]
-                    yaw_angles = fd[frame_indices, sd['yaw_col']]
-                    roll_angles = fd[frame_indices, sd['roll_col']]
+                    # Use original data length for data indexing
+                    data_frame_indices = np.linspace(0, n_data - 1, local_frames, dtype=int)
+                    pitch_angles = fd[data_frame_indices, sd['pitch_col']]
+                    yaw_angles = fd[data_frame_indices, sd['yaw_col']]
+                    roll_angles = fd[data_frame_indices, sd['roll_col']]
                     
                     if radians or sd['from_mat']:
                         pitch_angles = np.degrees(pitch_angles)
