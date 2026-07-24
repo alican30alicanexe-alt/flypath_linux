@@ -32,12 +32,12 @@ def _compute_trajectory_heading(points):
     return yaw, pitch
 
 
-def flypath3d(data, line_width=2, color=None, colormap=None, 
+def flypath3d(data, line_width=1, color=None, colormap=None, 
               show_grid=True, show_axes=True, title=None,
               background='white', off_screen=False, return_plotter=False,
               animate=False, save_animation=None,
               model=None, pitch_col=3, yaw_col=4, roll_col=5,
-              radians=False, order='pyr', speed=3.0):
+              radians=False, order='pyr', speed=3.0, model_scale=1.0):
     """MATLAB-like 3D trajectory plot with precision axis scaling.
     
     Renders a 3D trajectory with proper equal aspect ratio, MATLAB-style
@@ -197,7 +197,7 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
                 model_bounds[3] - model_bounds[2],  # y range
                 model_bounds[5] - model_bounds[4]   # z range
             )
-            target_size = data_range * 0.05  # Model will be 5% of data range
+            target_size = data_range * 0.05 * model_scale  # Model will be 5% of data range
             scale_factor = target_size / model_size if model_size > 0 else 1.0
             
             # Center the model at origin (create new mesh, avoid inplace)
@@ -236,7 +236,6 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
             pitch_angles = full_data[data_frame_indices, pitch_col]
             yaw_angles = full_data[data_frame_indices, yaw_col]
             roll_angles = full_data[data_frame_indices, roll_col]
-            
             # Convert radians to degrees if needed
             if radians or info.get('from_mat', False):
                 pitch_angles = np.degrees(pitch_angles)
@@ -303,7 +302,7 @@ def flypath3d(data, line_width=2, color=None, colormap=None,
 def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     title=None, background='white', off_screen=False,
                     return_plotter=False, animate=False, save_animation=None,
-                    radians=False, order='pyr', speed=3.0):
+                    radians=False, order='pyr', speed=3.0, model_scale=1.0):
     """Plot multiple trajectories in the same 3D scene, optionally with 3D models.
     
     Parameters

@@ -202,6 +202,10 @@ def main():
         help='Animation duration in seconds (default: 3.0)'
     )
     parser.add_argument(
+        '--model-scale', type=float, default=1.0,
+        help='Scale factor for 3D model size (default: 1.0)'
+    )
+    parser.add_argument(
         '--save-animation', default=None,
         help='Save animation as a GIF file'
     )
@@ -290,6 +294,7 @@ def main():
             radians=args.rad,
             order=args.order,
             speed=args.speed,
+            model_scale=args.model_scale,
         )
         return
 
