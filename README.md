@@ -10,7 +10,10 @@ Uses **PyVista (VTK)** for high-quality, MATLAB-like 3D rendering with equal asp
 - **Multi-trajectory** overlay in the same 3D scene
 - **3D model animation** — attach F-16, missile, or custom models to trajectories
 - **Multi-model animation** — multiple models following different paths simultaneously
-- **Orientation support** — pitch, yaw, roll from trajectory data
+- **Orientation support** — pitch, yaw, roll from trajectory data, auto-aligned to the flight path
+- **Flight trail** — reveal the path progressively as the model flies over it
+- **Vertical exaggeration** — stretch a flat/altitude axis without distorting the tick values
+- **Top-down / side presets** — flat orthographic scene views
 - **Animation export** — save as GIF
 - **Standalone executable** — build with PyInstaller (no Python required)
 
@@ -37,6 +40,39 @@ pytrajectory examples/sample_data.csv --colormap viridis --title "My Trajectory"
 
 ```bash
 pytrajectory examples/sample_data.csv --animate --model models/f-16.mat
+
+# Reveal the path as a growing flight trail, and show start/end markers
+pytrajectory examples/trajectory_aircraft.mat --animate --model models/f-16.mat \
+  --trail --markers
+```
+
+### Display options
+
+```bash
+# Markers (green start / red end) are hidden by default — show them:
+pytrajectory trajectory.csv --markers
+
+# Vertical exaggeration for flat trajectories (z-range << x/y-range).
+# Tick labels keep real values; only the geometry is stretched:
+pytrajectory trajectory.csv --z-scale 8
+
+# Manual axis limits (also reframe the camera, not just the grid box):
+pytrajectory trajectory.csv --xlim -500 500 --ylim -500 3500 --zlim 500 1500
+```
+
+### Orientation / angle conventions
+
+The trajectory attitude columns default to the **aerospace** convention
+(yaw = compass/clockwise-positive, pitch = nose-up-positive), matching typical
+flight `.mat` data. The model is auto-mounted onto the path's initial heading,
+so it stays aligned through turns.
+
+```bash
+# Switch to the math convention (yaw counter-clockwise-positive):
+pytrajectory trajectory.csv --animate --model models/f-16.mat --math
+
+# Or invert a single axis if the model turns/pitches/banks the wrong way:
+pytrajectory trajectory.csv --animate --model models/f-16.mat --flip-yaw
 ```
 
 ### Multiple trajectories
@@ -84,6 +120,34 @@ models = [
 flypath3d_multi(trajectories, models=models, title='Engagement', animate=True)
 ```
 
+### Combat scene example
+
+`examples/combat_example.py` reproduces the classic flypath3d combat demo — a
+friendly aircraft, an enemy aircraft, and an air-to-air missile, each with its
+own path color and model, viewed top-down. It writes a static multi-exposure
+PNG and an animated GIF.
+
+```bash
+python examples/combat_example.py
+```
+
+It uses these `flypath3d_multi` options:
+
+```python
+flypath3d_multi(
+    trajectories,               # each: {'data', 'color'(name/hex/RGB tuple)}
+    models=[                    # per model:
+        {'path': 'models/f-16.mat', 'trajectory_index': 0,
+         'color': (.3, .3, .3),
+         'scale': 1.0,          # size, as a fraction of the scene
+         'count': 6},           # static copies placed along the path (PNG only)
+    ],
+    view='top',                 # 'top' | 'side' | 'iso'  (orthographic for top/side)
+    window_size=(1000, 280),    # pixels
+    xlim=(-500, 500), ylim=(-500, 3500), zlim=(500, 1500),
+)
+```
+
 ## Building Standalone Executable
 
 ```bash
@@ -112,7 +176,8 @@ x, y, z, pitch, yaw, roll
 ...
 ```
 Columns 0-2: x, y, z coordinates
-Columns 3-5: pitch, yaw, roll angles (radians, optional)
+Columns 3-5: pitch, yaw, roll angles (optional). CSV angles are **degrees** by
+default (pass `--rad` for radians); `.mat` files are assumed to be radians.
 
 ### 3D Model files (.mat)
 MATLAB .mat files containing:

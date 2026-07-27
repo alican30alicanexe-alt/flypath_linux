@@ -25,6 +25,18 @@ def _make_spline(points, max_ctrl=1000, max_interp=6000):
     return pv.Spline(points, n_interp)
 
 
+def _prepare_model_mesh(path, target_size):
+    """Load a model mesh, center it, scale it to `target_size`, and flip it so
+    its nose points +X (the meshes here point -X)."""
+    mesh = load_3d_model(path)
+    b = mesh.bounds
+    size = max(b[1] - b[0], b[3] - b[2], b[5] - b[4])
+    factor = target_size / size if size > 0 else 1.0
+    mesh = mesh.translate(-np.array(mesh.center))
+    mesh = mesh.scale([factor, factor, factor])
+    return mesh.rotate_z(180)
+
+
 def _euler_to_matrix(pitch_deg, yaw_deg, roll_deg):
     """Vectorized rotation matrices for arrays of Euler angles (degrees).
 
@@ -79,6 +91,31 @@ def _alignment_rotation(direction):
     return _euler_to_matrix([np.degrees(pitch)], [np.degrees(yaw)], [0.0])[0]
 
 
+def _mount_base(init_dir, full_data, pitch_col, yaw_col, from_mat,
+                yaw_sign=-1.0, pitch_sign=-1.0, radians=False):
+    """Base rotation that mounts the model onto the trajectory's initial
+    heading.
+
+    Aligns the model nose (+X) with the initial direction of travel, then undoes
+    the data's attitude at the first sample. This matters when the data's zero
+    reference is not the initial tangent (e.g. trajectory_enemy starts with a
+    nonzero yaw): without it a constant heading offset remains for the whole
+    flight.
+    """
+    base_align = _alignment_rotation(init_dir)
+    if full_data is None:
+        return base_align
+    n_data = len(full_data)
+    if n_data <= max(pitch_col, yaw_col):
+        return base_align
+    p0 = full_data[0, pitch_col]
+    y0 = full_data[0, yaw_col]
+    if radians or from_mat:
+        p0, y0 = np.degrees(p0), np.degrees(y0)
+    r0 = _euler_to_matrix([pitch_sign * p0], [yaw_sign * y0], [0.0])[0]
+    return base_align @ r0.T
+
+
 def _trajectory_tangents(points, indices):
     """Unit direction of travel at each of the given point indices (via central
     differences), for aligning a model that has no attitude data."""
@@ -109,7 +146,45 @@ def _build_frame_matrices(positions, pitch_deg, yaw_deg, roll_deg,
     return mats
 
 
-def flypath3d(data, line_width=1, color=None, colormap=None, 
+def _model_matrices_along(sd, spline_indices, yaw_sign=-1.0, pitch_sign=-1.0,
+                          roll_sign=1.0, radians=False):
+    """Compute (N, 4, 4) placement transforms for a model at the given spline
+    indices of a trajectory, oriented by the trajectory's attitude data (or by
+    the direction of travel when no attitude data is present). Shared by the
+    static multi-placement path."""
+    sp = sd['spline'].points
+    n_spline = len(sp)
+    positions = sp[spline_indices]
+    init_dir = sd['points'][min(4, len(sd['points']) - 1)] - sd['points'][0]
+
+    fd = sd['full_data']
+    n_data = len(fd) if fd is not None else 0
+    has_orient = (fd is not None and
+                  n_data > max(sd['pitch_col'], sd['yaw_col'], sd['roll_col']))
+
+    if has_orient:
+        base_rotation = _mount_base(init_dir, fd, sd['pitch_col'], sd['yaw_col'],
+                                    sd['from_mat'], yaw_sign, pitch_sign, radians)
+        fracs = np.asarray(spline_indices, dtype=float) / max(1, n_spline - 1)
+        di = np.round(fracs * (n_data - 1)).astype(int)
+        pitch = fd[di, sd['pitch_col']]
+        yaw = fd[di, sd['yaw_col']]
+        roll = fd[di, sd['roll_col']]
+        if radians or sd['from_mat']:
+            pitch, yaw, roll = np.degrees(pitch), np.degrees(yaw), np.degrees(roll)
+        pitch, yaw, roll = pitch_sign * pitch, yaw_sign * yaw, roll_sign * roll
+        return _build_frame_matrices(positions, pitch, yaw, roll,
+                                     base_rotation=base_rotation)
+
+    tangents = _trajectory_tangents(sp, spline_indices)
+    rots = np.stack([_alignment_rotation(t) for t in tangents])
+    mats = np.tile(np.eye(4), (len(positions), 1, 1))
+    mats[:, :3, :3] = rots
+    mats[:, :3, 3] = positions
+    return mats
+
+
+def flypath3d(data, line_width=1, color=None, colormap=None,
               show_grid=True, show_axes=True, title=None,
               background='white', off_screen=False, return_plotter=False,
               animate=False, save_animation=None,
@@ -410,11 +485,13 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
             yaw_angles = yaw_sign * yaw_angles
             roll_angles = roll_sign * roll_angles
 
-            # Mount the model onto the trajectory's initial heading, then apply
-            # the data's per-frame attitude (expressed relative to that launch
-            # direction) on top, keeping it aligned through the turns.
-            base_rotation = _alignment_rotation(points[min(4, len(points) - 1)]
-                                                - points[0])
+            # Mount the model onto the trajectory's initial heading (accounting
+            # for the data's attitude at the first sample), then apply the
+            # per-frame attitude on top, keeping it aligned through the turns.
+            base_rotation = _mount_base(
+                points[min(4, len(points) - 1)] - points[0], full_data,
+                pitch_col, yaw_col, info.get('from_mat', False),
+                yaw_sign, pitch_sign, radians)
             frame_matrices = _build_frame_matrices(
                 frame_positions, pitch_angles, yaw_angles, roll_angles,
                 base_rotation=base_rotation)
@@ -479,8 +556,21 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     radians=False, order='pyr', speed=3.0, model_scale=1.0,
                     xlim=None, ylim=None, zlim=None, z_scale=1.0,
                     yaw_sign=-1.0, pitch_sign=-1.0, roll_sign=1.0,
-                    show_markers=False, trail=False):
+                    show_markers=False, trail=False,
+                    view=None, window_size=None):
     """Plot multiple trajectories in the same 3D scene, optionally with 3D models.
+
+    view : str or (azimuth, elevation), optional
+        Camera preset: 'top' (look straight down, x up / y right), 'side', or
+        'iso' (default). A tuple sets an explicit azimuth/elevation.
+    window_size : (w, h), optional
+        Render window size in pixels (e.g. (1000, 280) for a wide scene).
+
+    models : list of dict, optional
+        Each dict may also include:
+        - 'scale': float (per-model size multiplier, overrides model_scale)
+        - 'count': int (place this many static copies along the path when not
+          animating — a multi-exposure view of the trajectory)
     
     Parameters
     ----------
@@ -554,10 +644,13 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
     is_save = save_animation is not None
     plotter = pv.Plotter(off_screen=off_screen or is_save)
     plotter.background_color = background
-    
+    if window_size is not None:
+        plotter.window_size = list(window_size)
+
     # Store spline data for animation
     spline_data = []
-    
+    any_label = False  # track whether a labeled mesh was actually drawn
+
     for idx, (traj, points, info) in enumerate(zip(trajectories, all_points, all_infos)):
         color = traj.get('color', None)
         colormap = traj.get('colormap', None)
@@ -607,6 +700,8 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
             else:
                 plotter.add_mesh(tube, color=use_color, smooth_shading=True,
                                  label=label)
+            if label:
+                any_label = True
 
         # Start/end markers (hidden unless requested)
         bbox_diagonal = np.linalg.norm([global_range, global_range, global_range])
@@ -648,14 +743,29 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                               (gz_min + gz_max) / 2])
     bounds_range_axes = np.array([gx_max - gx_min, gy_max - gy_min, gz_max - gz_min])
     max_range = max(bounds_range_axes) if max(bounds_range_axes) > 0 else 1.0
-    plotter.camera_position = 'iso'
-    plotter.camera.focal_point = bounds_center
-    plotter.camera.position = (
-        bounds_center[0] + max_range * 1.5,
-        bounds_center[1] + max_range * 1.5,
-        bounds_center[2] + max_range * 1.5,
-    )
-    plotter.camera.view_up = (0, 0, 1)
+    if view in ('top', 'xy'):
+        # Look straight down the -Z axis: x points up, y points right.
+        # Parallel projection gives a flat, MATLAB-like orthographic view.
+        plotter.enable_parallel_projection()
+        plotter.camera.focal_point = bounds_center
+        plotter.camera.position = (bounds_center[0], bounds_center[1],
+                                   bounds_center[2] + max_range * 2.0)
+        plotter.camera.view_up = (1, 0, 0)
+    elif view in ('side', 'xz'):
+        plotter.enable_parallel_projection()
+        plotter.camera.focal_point = bounds_center
+        plotter.camera.position = (bounds_center[0], bounds_center[1] - max_range * 2.0,
+                                   bounds_center[2])
+        plotter.camera.view_up = (0, 0, 1)
+    else:
+        plotter.camera_position = 'iso'
+        plotter.camera.focal_point = bounds_center
+        plotter.camera.position = (
+            bounds_center[0] + max_range * 1.5,
+            bounds_center[1] + max_range * 1.5,
+            bounds_center[2] + max_range * 1.5,
+        )
+        plotter.camera.view_up = (0, 0, 1)
     plotter.camera.clipping_range = (0.01, max_range * 10)
 
     if show_axes:
@@ -665,10 +775,35 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
     if z_scale != 1.0:
         plotter.set_scale(1, 1, z_scale, reset_camera=True)
     
-    # Add legend if any labels
-    if any(t.get('label') for t in trajectories):
+    # Add legend if any labeled meshes were drawn (trail mode draws none upfront)
+    if any_label:
         plotter.add_legend()
-    
+
+    # --- Static multi-placement (multi-exposure): place N model copies along
+    # each assigned path when not animating (mirrors flypath3d's `step`). ---
+    animating = animate or save_animation is not None
+    if models and not animating:
+        for m in models:
+            idx = m.get('trajectory_index', 0)
+            if idx >= len(spline_data):
+                continue
+            sd = spline_data[idx]
+            count = max(1, int(m.get('count', 1)))
+            scale = m.get('scale', model_scale)
+            color = m.get('color', 'gray')
+            target_size = global_range * 0.05 * scale
+            base_mesh = _prepare_model_mesh(m['path'], target_size)
+
+            n_sp = len(sd['spline'].points)
+            place_idx = np.linspace(0, n_sp - 1, count, dtype=int)
+            mats = _model_matrices_along(sd, place_idx, yaw_sign, pitch_sign,
+                                         roll_sign, radians)
+            if z_scale != 1.0:
+                mats[:, 2, 3] = mats[:, 2, 3] * z_scale
+            for k in range(count):
+                actor = plotter.add_mesh(base_mesh.copy(), color=color)
+                actor.user_matrix = mats[k]
+
     # --- Animation support ---
     if animate or save_animation is not None:
         # Use the first trajectory's spline for frame count
@@ -704,37 +839,28 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                 frame_positions[:, 2] = frame_positions[:, 2] * z_scale
 
             # Base mount rotation aligning the model's nose (+X) with this
-            # trajectory's initial heading.
-            base_rotation = _alignment_rotation(
-                sd['points'][min(4, len(sd['points']) - 1)] - sd['points'][0])
+            # trajectory's initial heading (accounting for its start attitude).
+            base_rotation = _mount_base(
+                sd['points'][min(4, len(sd['points']) - 1)] - sd['points'][0],
+                sd['full_data'], sd['pitch_col'], sd['yaw_col'], sd['from_mat'],
+                yaw_sign, pitch_sign, radians)
 
             # Check if a model is assigned to this trajectory
             assigned_model = None
             model_color = 'gray'
+            model_scale_local = model_scale
             if models:
                 for m in models:
                     if m.get('trajectory_index') == idx:
                         assigned_model = m['path']
                         model_color = m.get('color', 'gray')
+                        model_scale_local = m.get('scale', model_scale)
                         break
-            
+
             if assigned_model is not None:
-                # Load and scale model
-                model_mesh = load_3d_model(assigned_model)
-                model_bounds = model_mesh.bounds
-                model_size = max(
-                    model_bounds[1] - model_bounds[0],
-                    model_bounds[3] - model_bounds[2],
-                    model_bounds[5] - model_bounds[4]
-                )
-                target_size = global_range * 0.05
-                scale_factor = target_size / model_size if model_size > 0 else 1.0
-                
-                model_center = np.array(model_mesh.center)
-                model_mesh = model_mesh.translate(-model_center)
-                model_mesh = model_mesh.scale([scale_factor, scale_factor, scale_factor])
-                # Nose points -X in these meshes; flip so nose is +X.
-                model_mesh = model_mesh.rotate_z(180)
+                # Load, scale and orient the model (nose -> +X)
+                target_size = global_range * 0.05 * model_scale_local
+                model_mesh = _prepare_model_mesh(assigned_model, target_size)
 
                 actor = plotter.add_mesh(
                     model_mesh, color=model_color,
