@@ -76,6 +76,11 @@ def demo_multi(animate=False, save_animation=None):
     )
 
 
+# Fallback colors assigned in order to trajectories that don't specify one.
+TRAJ_PALETTE = ['red', 'blue', 'green', 'orange', 'purple', 'cyan',
+                'magenta', 'brown', 'teal', 'olive']
+
+
 def _parse_color(value):
     """Return a color usable by PyVista: an (r, g, b) tuple for 'r,g,b' strings,
     otherwise the string unchanged (name or hex)."""
@@ -119,6 +124,10 @@ def parse_traj_blocks(blocks, defaults):
         label = opts.get('label')
         lw = opts.get('lw', opts.get('linewidth', opts.get('line-width')))
         line_width = int(lw) if lw is not None else defaults.get('line_width')
+
+        # Give each trajectory a distinct color when none is specified.
+        if colormap is None and color is None:
+            color = TRAJ_PALETTE[idx % len(TRAJ_PALETTE)]
 
         traj = {'data': path}
         if colormap is not None:
@@ -177,9 +186,9 @@ def main():
         help='Colormap name (e.g., "jet", "viridis", "plasma")'
     )
     parser.add_argument(
-        '--line-width', type=int, default=15,
-        help='Trajectory line width on a fine scale (default: 15, a thin line; '
-             '100 ~= the classic thickness)'
+        '--line-width', type=int, default=50,
+        help='Trajectory line width on a fine scale (default: 50; '
+             '100 ~= the classic thickness, smaller values are thinner)'
     )
     parser.add_argument(
         '--markers', action='store_true',
@@ -253,8 +262,8 @@ def main():
     )
     parser.add_argument(
         '--scale', type=float, default=None,
-        help='Model size (alias for --model-scale; also the default scale for '
-             '--traj blocks). Wins over --model-scale if both are given.'
+        help='Model size multiplier (multiplies --model-scale; also the default '
+             'model scale for --traj blocks without their own scale=).'
     )
     parser.add_argument(
         '--xlim', type=float, nargs=2, default=None,
@@ -328,8 +337,8 @@ def main():
     if args.flip_roll:
         roll_sign = -roll_sign
 
-    # Model size: --scale is an alias for --model-scale and wins if given.
-    model_scale = args.scale if args.scale is not None else args.model_scale
+    # Model size: --scale multiplies on top of --model-scale when given.
+    model_scale = args.scale * args.model_scale if args.scale is not None else args.model_scale
 
     # Handle --list-demos
     if args.list_demos:
@@ -363,7 +372,7 @@ def main():
             'color': args.color,
             'colormap': args.colormap,
             'model': args.model,
-            'scale': args.scale,
+            'scale': model_scale,
             'line_width': args.line_width,
         }
         trajectories, models = parse_traj_blocks(args.traj, defaults)

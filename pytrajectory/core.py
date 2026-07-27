@@ -184,7 +184,7 @@ def _model_matrices_along(sd, spline_indices, yaw_sign=-1.0, pitch_sign=-1.0,
     return mats
 
 
-def flypath3d(data, line_width=15, color=None, colormap=None,
+def flypath3d(data, line_width=50, color=None, colormap=None,
               show_grid=True, show_axes=True, title=None,
               background='white', off_screen=False, return_plotter=False,
               animate=False, save_animation=None,
@@ -202,9 +202,9 @@ def flypath3d(data, line_width=15, color=None, colormap=None,
     ----------
     data : str or (N,3) array-like
         Path to CSV file, or (N, 3) array of [x, y, z] points.
-    line_width : int, default 15
+    line_width : int, default 50
         Width of the trajectory line on a fine scale (100 ~= the classic
-        default thickness; the default 15 is a thin line).
+        default thickness; the default 50 is a moderately thin line).
     show_markers : bool, default False
         Show green start / red end markers. Hidden by default.
     trail : bool, default False
@@ -657,7 +657,7 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
     for idx, (traj, points, info) in enumerate(zip(trajectories, all_points, all_infos)):
         color = traj.get('color', None)
         colormap = traj.get('colormap', None)
-        line_width = traj.get('line_width', 15)
+        line_width = traj.get('line_width', 50)
         label = traj.get('label', None)
         
         # Get column indices from auto-detection or user override
