@@ -29,12 +29,16 @@ def _prepare_model_mesh(path, target_size):
     """Load a model mesh, anchor it on its body axis, scale it to `target_size`,
     and flip it so its nose points +X (the meshes here point -X).
 
-    The anchor (the point placed on the trajectory) is the bounding-box center
-    along the longest axis — so the model stays centered fore-and-aft — but the
-    vertex centroid across the other two axes, so the path runs through the body
-    centerline rather than the bounding-box center. Otherwise a protrusion like
-    an aircraft's tail fin lifts the box center above the fuselage, and the path
-    (and trail) floats over the model — increasingly so as it is scaled up.
+    The anchor (the point placed on the trajectory) is the model's TAIL along
+    the longest axis — so the tail stays on the current path point (where the
+    trail ends) regardless of scale, and the body extends forward with the nose
+    ahead — but the vertex centroid across the other two axes, so the path runs
+    through the body centerline rather than the bounding-box center. Otherwise a
+    protrusion like an aircraft's tail fin lifts the box center above the
+    fuselage, and the path (and trail) floats over the model.
+
+    The meshes point nose along -X (tail = +X, the maximum bound); after the
+    rotate_z(180) below the tail sits at the origin and the nose points +X.
     """
     mesh = load_3d_model(path)
     b = mesh.bounds
@@ -43,7 +47,7 @@ def _prepare_model_mesh(path, target_size):
     factor = target_size / size if size > 0 else 1.0
     long_axis = int(np.argmax(extents))
     anchor = np.array(mesh.points).mean(axis=0)          # body centroid
-    anchor[long_axis] = (b[2 * long_axis] + b[2 * long_axis + 1]) / 2  # mid-length
+    anchor[long_axis] = b[2 * long_axis + 1]             # tail (max bound)
     mesh = mesh.translate(-anchor)
     mesh = mesh.scale([factor, factor, factor])
     return mesh.rotate_z(180)
@@ -425,15 +429,14 @@ def flypath3d(data, line_width=50, color=None, colormap=None,
 
         # Progressive trail: a tube that grows behind the model as it moves.
         # Use a downsampled path so rebuilding the tube each frame stays cheap.
-        # The trail ends about half a model-length behind the current position
-        # so it meets the model's tail instead of running through its middle.
+        # The model is anchored at its tail, so the trail ends at the current
+        # position (the tail); for a plain sphere marker pull it back a touch.
         trail_actor = None
         if trail:
             n_trail = min(n_spline, 300)
             trail_pts = sp[np.linspace(0, n_spline - 1, n_trail, dtype=int)]
             total_len = np.linalg.norm(np.diff(trail_pts, axis=0), axis=1).sum()
-            back = (data_range * 0.05 * model_scale) * 0.45 if model is not None \
-                else marker_radius
+            back = 0.0 if model is not None else marker_radius
             frac_off = (back / total_len) if total_len > 0 else 0.0
 
             def _trail_tube(frac):
@@ -846,15 +849,14 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     break
 
             # Progressive trail actor for this trajectory (downsampled path so
-            # rebuilding the tube each frame stays cheap). It ends about half a
-            # model-length behind the model so it meets the tail, not the middle.
+            # rebuilding the tube each frame stays cheap). The model is anchored
+            # at its tail, so the trail ends at the current position (the tail).
             if trail:
                 tr = sd['tube_radius']
                 n_t = min(len(sp_traj), 300)
                 tpts = sp_traj[np.linspace(0, len(sp_traj) - 1, n_t, dtype=int)]
                 total_len = np.linalg.norm(np.diff(tpts, axis=0), axis=1).sum()
-                back = (global_range * 0.05 * assigned_scale) * 0.45 \
-                    if assigned_scale is not None else global_range * 0.005
+                back = 0.0 if assigned_scale is not None else global_range * 0.005
                 frac_off = (back / total_len) if total_len > 0 else 0.0
                 tube0 = pv.Spline(tpts[:2]).tube(radius=tr)
                 trail_actor = plotter.add_mesh(tube0, color=sd['color'],
@@ -864,13 +866,6 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
             # vertically-exaggerated scene (set_scale doesn't move translations).
             if z_scale != 1.0:
                 frame_positions[:, 2] = frame_positions[:, 2] * z_scale
-
-            # Base mount rotation aligning the model's nose (+X) with this
-            # trajectory's initial heading (accounting for its start attitude).
-            base_rotation = _mount_base(
-                sd['points'][min(4, len(sd['points']) - 1)] - sd['points'][0],
-                sd['full_data'], sd['pitch_col'], sd['yaw_col'], sd['from_mat'],
-                yaw_sign, pitch_sign, radians)
 
             # Check if a model is assigned to this trajectory
             assigned_model = None
@@ -902,6 +897,12 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                              and not _face_is_path(traj_face))
 
                 if has_orient:
+                    # Mount rotation aligning the model's nose (+X) with the
+                    # initial heading (accounting for its start attitude).
+                    base_rotation = _mount_base(
+                        sd['points'][min(4, len(sd['points']) - 1)] - sd['points'][0],
+                        sd['full_data'], sd['pitch_col'], sd['yaw_col'],
+                        sd['from_mat'], yaw_sign, pitch_sign, radians)
                     data_frame_indices = np.linspace(0, n_data - 1, local_frames, dtype=int)
                     pitch_angles = fd[data_frame_indices, sd['pitch_col']]
                     yaw_angles = fd[data_frame_indices, sd['yaw_col']]
