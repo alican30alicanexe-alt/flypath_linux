@@ -9,6 +9,53 @@ from pathlib import Path
 from .io import load_trajectory, load_3d_model
 
 
+def _euler_to_matrix(pitch_deg, yaw_deg, roll_deg):
+    """Vectorized rotation matrices for arrays of Euler angles (degrees).
+
+    Returns (N, 3, 3) matrices R = Rz(yaw) @ Ry(pitch) @ Rx(roll), matching the
+    standard aerospace/MATLAB convention. VTK's actor.SetOrientation applies a
+    different composition (Rz @ Rx @ Ry), so we build the matrix explicitly
+    instead of relying on it.
+    """
+    p = np.radians(np.asarray(pitch_deg, dtype=float))
+    y = np.radians(np.asarray(yaw_deg, dtype=float))
+    r = np.radians(np.asarray(roll_deg, dtype=float))
+    n = p.shape[0]
+
+    cz, sz = np.cos(y), np.sin(y)
+    cy, sy = np.cos(p), np.sin(p)
+    cx, sx = np.cos(r), np.sin(r)
+
+    Rz = np.zeros((n, 3, 3))
+    Rz[:, 0, 0] = cz; Rz[:, 0, 1] = -sz
+    Rz[:, 1, 0] = sz; Rz[:, 1, 1] = cz
+    Rz[:, 2, 2] = 1.0
+
+    Ry = np.zeros((n, 3, 3))
+    Ry[:, 0, 0] = cy; Ry[:, 0, 2] = sy
+    Ry[:, 1, 1] = 1.0
+    Ry[:, 2, 0] = -sy; Ry[:, 2, 2] = cy
+
+    Rx = np.zeros((n, 3, 3))
+    Rx[:, 0, 0] = 1.0
+    Rx[:, 1, 1] = cx; Rx[:, 1, 2] = -sx
+    Rx[:, 2, 1] = sx; Rx[:, 2, 2] = cx
+
+    return Rz @ Ry @ Rx
+
+
+def _build_frame_matrices(positions, pitch_deg, yaw_deg, roll_deg):
+    """Build (N, 4, 4) transforms combining translation + rotation, suitable
+    for assigning directly to actor.user_matrix per animation frame.
+    """
+    n = len(positions)
+    rot = _euler_to_matrix(pitch_deg, yaw_deg, roll_deg)
+    mats = np.tile(np.eye(4), (n, 1, 1))
+    mats[:, :3, :3] = rot
+    mats[:, :3, 3] = positions
+    return mats
+
+
 def _compute_trajectory_heading(points):
     """Compute initial heading (yaw) and pitch from trajectory direction.
     
@@ -39,7 +86,7 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
               animate=False, save_animation=None,
               model=None, pitch_col=3, yaw_col=4, roll_col=5,
               radians=False, order='pyr', speed=3.0, model_scale=1.0,
-              xlim=None, ylim=None, zlim=None):
+              xlim=None, ylim=None, zlim=None, z_scale=1.0):
     """MATLAB-like 3D trajectory plot with precision axis scaling.
     
     Renders a 3D trajectory with proper equal aspect ratio, MATLAB-style
@@ -203,22 +250,34 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
         plotter.add_text(title, position='upper_edge', font_size=14,
                          color='black' if background == 'white' else 'white')
     
-    # Set camera to focus on data center with appropriate distance
-    data_center = (data_min + data_max) / 2
-    max_range = max(data_range_axes)
+    # Set camera to focus on the (possibly user-limited) bounds, not raw data,
+    # so xlim/ylim/zlim actually reframe the view.
+    bounds_center = np.array([(x_min + x_max) / 2,
+                              (y_min + y_max) / 2,
+                              (z_min + z_max) / 2])
+    bounds_range_axes = np.array([x_max - x_min, y_max - y_min, z_max - z_min])
+    max_range = max(bounds_range_axes) if max(bounds_range_axes) > 0 else 1.0
+
+    # Set camera position
     plotter.camera_position = 'iso'
-    plotter.camera.focal_point = data_center
+    plotter.camera.focal_point = bounds_center
     plotter.camera.position = (
-        data_center[0] + max_range * 1.5,
-        data_center[1] + max_range * 1.5,
-        data_center[2] + max_range * 1.5,
+        bounds_center[0] + max_range * 1.5,
+        bounds_center[1] + max_range * 1.5,
+        bounds_center[2] + max_range * 1.5,
     )
     plotter.camera.view_up = (0, 0, 1)
-    plotter.camera.zoom(0.9)
-    
+
+    # Set clipping range to data bounds so axes scale correctly
+    plotter.camera.clipping_range = (0.01, max_range * 10)
+
     # Add axes labels
     if show_axes:
         plotter.add_axes()
+
+    # Vertical exaggeration: visually stretch z while keeping real tick labels
+    if z_scale != 1.0:
+        plotter.set_scale(1, 1, z_scale, reset_camera=True)
     
     # --- Animation support ---
     if animate or save_animation is not None:
@@ -261,9 +320,15 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
                 specular=0.5, specular_power=20
             )
         
-        # Pre-compute all frame positions
-        frame_positions = sp[frame_indices]
-        
+        # Pre-compute all frame positions. Animated actors are positioned via
+        # a user_matrix translation, which VTK does NOT scale with set_scale
+        # (unlike baked-vertex meshes such as the tube/markers). So when the
+        # scene is vertically exaggerated, pre-scale the z of moving actors to
+        # keep them riding on the stretched trajectory.
+        frame_positions = sp[frame_indices].copy()
+        if z_scale != 1.0:
+            frame_positions[:, 2] = frame_positions[:, 2] * z_scale
+
         # Get orientation data if available
         n_data = len(full_data) if full_data is not None else 0
         has_orientation = (full_data is not None and 
@@ -285,32 +350,28 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
                 pitch_angles = np.degrees(pitch_angles)
                 yaw_angles = np.degrees(yaw_angles)
                 roll_angles = np.degrees(roll_angles)
-            
-            # Add trajectory heading to align model with flight direction
-            # The data angles are relative to the trajectory direction
-            yaw_angles = yaw_angles + traj_yaw
-            pitch_angles = pitch_angles + traj_pitch
-            
-            # VTK SetOrientation(roll, pitch, yaw) applies ZYX intrinsic (yaw->pitch->roll)
-            frame_orientations = np.column_stack([roll_angles, pitch_angles, yaw_angles])
+
+            # Use the file's absolute orientation angles directly (no heading
+            # offset — the data already provides per-frame inertial angles)
+            frame_matrices = _build_frame_matrices(
+                frame_positions, pitch_angles, yaw_angles, roll_angles)
         else:
             # No orientation data: just align model with trajectory direction
-            frame_orientations = np.zeros((n_frames, 3))
-            frame_orientations[:, 1] = traj_pitch  # pitch
-            frame_orientations[:, 2] = traj_yaw    # yaw
-        
+            pitch_angles = np.full(n_frames, traj_pitch)
+            yaw_angles = np.full(n_frames, traj_yaw)
+            roll_angles = np.zeros(n_frames)
+            frame_matrices = _build_frame_matrices(
+                frame_positions, pitch_angles, yaw_angles, roll_angles)
+
         # Set initial position and orientation
-        anim_actor.SetPosition(frame_positions[0][0], frame_positions[0][1], frame_positions[0][2])
-        anim_actor.SetOrientation(*frame_orientations[0])
+        anim_actor.user_matrix = frame_matrices[0]
         
         if save_animation is not None:
             # For GIF saving: render each frame via screenshot (offscreen)
             import imageio
             frames = []
             for f_idx in range(n_frames):
-                pos = frame_positions[f_idx]
-                anim_actor.SetOrientation(*frame_orientations[f_idx])
-                anim_actor.SetPosition(pos[0], pos[1], pos[2])
+                anim_actor.user_matrix = frame_matrices[f_idx]
                 img = plotter.screenshot(return_img=True)
                 frames.append(img)
             imageio.mimsave(save_animation, frames, fps=30, loop=0)
@@ -318,12 +379,10 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
         else:
             # Interactive animation: use VTK timer
             frame_index = [0]
-            
+
             def update_frame(step):
                 f_idx = frame_index[0] % n_frames
-                pos = frame_positions[f_idx]
-                anim_actor.SetOrientation(*frame_orientations[f_idx])
-                anim_actor.SetPosition(pos[0], pos[1], pos[2])
+                anim_actor.user_matrix = frame_matrices[f_idx]
                 frame_index[0] += 1
             
             duration_ms = max(10, int((speed * 1000) // n_frames))
@@ -346,7 +405,8 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
 def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     title=None, background='white', off_screen=False,
                     return_plotter=False, animate=False, save_animation=None,
-                    radians=False, order='pyr', speed=3.0, model_scale=1.0):
+                    radians=False, order='pyr', speed=3.0, model_scale=1.0,
+                    xlim=None, ylim=None, zlim=None, z_scale=1.0):
     """Plot multiple trajectories in the same 3D scene, optionally with 3D models.
     
     Parameters
@@ -397,7 +457,26 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
     global_min = np.min([np.min(p, axis=0) for p in all_points], axis=0)
     global_max = np.max([np.max(p, axis=0) for p in all_points], axis=0)
     global_range = np.max(global_max - global_min)
-    
+
+    # Compute bounds with 10% padding (or use manual limits if provided)
+    global_range_axes = global_max - global_min
+    if xlim is not None:
+        gx_min, gx_max = xlim
+    else:
+        pad = max(global_range_axes[0] * 0.1, global_range * 0.01)
+        gx_min, gx_max = global_min[0] - pad, global_max[0] + pad
+    if ylim is not None:
+        gy_min, gy_max = ylim
+    else:
+        pad = max(global_range_axes[1] * 0.1, global_range * 0.01)
+        gy_min, gy_max = global_min[1] - pad, global_max[1] + pad
+    if zlim is not None:
+        gz_min, gz_max = zlim
+    else:
+        pad = max(global_range_axes[2] * 0.1, global_range * 0.01)
+        gz_min, gz_max = global_min[2] - pad, global_max[2] + pad
+    global_bounds = [gx_min, gx_max, gy_min, gy_max, gz_min, gz_max]
+
     # Create plotter
     is_save = save_animation is not None
     plotter = pv.Plotter(off_screen=off_screen or is_save)
@@ -480,17 +559,36 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
         plotter.show_grid(
             show_xaxis=show_axes, show_yaxis=show_axes, show_zaxis=show_axes,
             grid=True, location='outer', bold=True, font_size=10,
+            bounds=global_bounds,
         )
-    
+
     # Title
     if title:
         plotter.add_text(title, position='upper_edge', font_size=14,
                          color='black' if background == 'white' else 'white')
-    
-    plotter.view_isometric()
-    
+
+    # Frame the (possibly user-limited) bounds so xlim/ylim/zlim reframe the view
+    bounds_center = np.array([(gx_min + gx_max) / 2,
+                              (gy_min + gy_max) / 2,
+                              (gz_min + gz_max) / 2])
+    bounds_range_axes = np.array([gx_max - gx_min, gy_max - gy_min, gz_max - gz_min])
+    max_range = max(bounds_range_axes) if max(bounds_range_axes) > 0 else 1.0
+    plotter.camera_position = 'iso'
+    plotter.camera.focal_point = bounds_center
+    plotter.camera.position = (
+        bounds_center[0] + max_range * 1.5,
+        bounds_center[1] + max_range * 1.5,
+        bounds_center[2] + max_range * 1.5,
+    )
+    plotter.camera.view_up = (0, 0, 1)
+    plotter.camera.clipping_range = (0.01, max_range * 10)
+
     if show_axes:
         plotter.add_axes()
+
+    # Vertical exaggeration: visually stretch z while keeping real tick labels
+    if z_scale != 1.0:
+        plotter.set_scale(1, 1, z_scale, reset_camera=True)
     
     # Add legend if any labels
     if any(t.get('label') for t in trajectories):
@@ -512,8 +610,12 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
             n_local = len(sp_traj)
             local_frames = min(n_frames, n_local)
             local_indices = np.linspace(0, n_local - 1, local_frames, dtype=int)
-            frame_positions = sp_traj[local_indices]
-            
+            frame_positions = sp_traj[local_indices].copy()
+            # See flypath3d(): moving actors need their z pre-scaled to ride the
+            # vertically-exaggerated scene (set_scale doesn't move translations).
+            if z_scale != 1.0:
+                frame_positions[:, 2] = frame_positions[:, 2] * z_scale
+
             # Compute trajectory heading for this trajectory
             traj_yaw, traj_pitch = _compute_trajectory_heading(sd['points'])
             
@@ -563,21 +665,21 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                         pitch_angles = np.degrees(pitch_angles)
                         yaw_angles = np.degrees(yaw_angles)
                         roll_angles = np.degrees(roll_angles)
-                    
-                    # Add trajectory heading
-                    yaw_angles = yaw_angles + traj_yaw
-                    pitch_angles = pitch_angles + traj_pitch
-                    
-                    frame_orientations = np.column_stack([roll_angles, pitch_angles, yaw_angles])
+
+                    # Use the file's absolute orientation angles directly
+                    frame_matrices = _build_frame_matrices(
+                        frame_positions, pitch_angles, yaw_angles, roll_angles)
                 else:
-                    frame_orientations = np.zeros((local_frames, 3))
-                    frame_orientations[:, 1] = traj_pitch
-                    frame_orientations[:, 2] = traj_yaw
-                
+                    pitch_angles = np.full(local_frames, traj_pitch)
+                    yaw_angles = np.full(local_frames, traj_yaw)
+                    roll_angles = np.zeros(local_frames)
+                    frame_matrices = _build_frame_matrices(
+                        frame_positions, pitch_angles, yaw_angles, roll_angles)
+
                 frame_data.append({
                     'actor': actor,
                     'positions': frame_positions,
-                    'orientations': frame_orientations,
+                    'matrices': frame_matrices,
                     'is_model': True,
                 })
             else:
@@ -602,10 +704,13 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
             frames = []
             for f_idx in range(n_frames):
                 for fd in frame_data:
-                    pos = fd['positions'][f_idx]
+                    n_local = len(fd['positions'])
+                    li = min(f_idx, n_local - 1)
                     if fd['is_model']:
-                        fd['actor'].SetOrientation(*fd['orientations'][f_idx])
-                    fd['actor'].SetPosition(pos[0], pos[1], pos[2])
+                        fd['actor'].user_matrix = fd['matrices'][li]
+                    else:
+                        pos = fd['positions'][li]
+                        fd['actor'].SetPosition(pos[0], pos[1], pos[2])
                 img = plotter.screenshot(return_img=True)
                 frames.append(img)
             imageio.mimsave(save_animation, frames, fps=30, loop=0)
@@ -617,10 +722,13 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
             def update_frame(step):
                 f_idx = frame_index[0] % n_frames
                 for fd in frame_data:
-                    pos = fd['positions'][f_idx]
+                    n_local = len(fd['positions'])
+                    li = min(f_idx, n_local - 1)
                     if fd['is_model']:
-                        fd['actor'].SetOrientation(*fd['orientations'][f_idx])
-                    fd['actor'].SetPosition(pos[0], pos[1], pos[2])
+                        fd['actor'].user_matrix = fd['matrices'][li]
+                    else:
+                        pos = fd['positions'][li]
+                        fd['actor'].SetPosition(pos[0], pos[1], pos[2])
                 frame_index[0] += 1
             
             duration_ms = max(10, int((speed * 1000) // n_frames))

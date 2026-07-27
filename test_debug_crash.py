@@ -21,7 +21,7 @@ except Exception as e:
 print("\n[2/5] Testing CSV loading...")
 try:
     from pytrajectory.io import load_csv
-    points, df = load_csv('examples/sample_data.csv')
+    points, df, col_map = load_csv('examples/sample_data.csv')
     print(f"  OK: CSV loaded: {len(points)} points")
 except Exception as e:
     print(f"  FAIL: {e}")

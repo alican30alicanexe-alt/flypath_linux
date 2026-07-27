@@ -218,6 +218,12 @@ def main():
         help='Z-axis limits: min max (e.g., --zlim 0 500)'
     )
     parser.add_argument(
+        '--z-scale', type=float, default=1.0,
+        help='Vertical exaggeration factor for the z-axis (default: 1.0, no change). '
+             'E.g. --z-scale 5 stretches z 5x for flat/altitude-limited trajectories '
+             'while keeping real z tick labels.'
+    )
+    parser.add_argument(
         '--save-animation', default=None,
         help='Save animation as a GIF file'
     )
@@ -282,6 +288,12 @@ def main():
             off_screen=args.off_screen,
             animate=args.animate,
             save_animation=args.save_animation,
+            speed=args.speed,
+            model_scale=args.model_scale,
+            xlim=args.xlim,
+            ylim=args.ylim,
+            zlim=args.zlim,
+            z_scale=args.z_scale,
         )
         return
 
@@ -310,6 +322,7 @@ def main():
             xlim=args.xlim,
             ylim=args.ylim,
             zlim=args.zlim,
+            z_scale=args.z_scale,
         )
         return
 
