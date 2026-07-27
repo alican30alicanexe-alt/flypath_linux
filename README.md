@@ -49,6 +49,14 @@ pytrajectory examples/trajectory_aircraft.mat --animate --model models/f-16.mat 
 ### Display options
 
 ```bash
+# Line width uses a fine scale: default (15) is a thin line, and 100 ~= the
+# classic thickness. Use small values for hairlines:
+pytrajectory trajectory.csv --line-width 100
+pytrajectory trajectory.csv --line-width 5
+
+# Model size (alias for --model-scale):
+pytrajectory trajectory.csv --model models/f-16.mat --scale 10 --animate
+
 # Markers (green start / red end) are hidden by default — show them:
 pytrajectory trajectory.csv --markers
 
@@ -77,16 +85,27 @@ pytrajectory trajectory.csv --animate --model models/f-16.mat --flip-yaw
 
 ### Multiple trajectories
 
-```bash
-pytrajectory --multi traj1.csv:red:Missile traj2.csv:blue:Aircraft
-```
-
-### Multiple trajectories with 3D models
+Each trajectory is its own `--traj` block: a file path followed by `key=value`
+options. Global `--color`/`--colormap`/`--model`/`--scale`/`--line-width` act as
+defaults, and per-block keys override them.
 
 ```bash
-pytrajectory --multi missile.csv:red:Missile target.csv:blue:Target \
-  --models models/missile.mat:0:gray models/f-16.mat:1:green
+pytrajectory \
+  --traj traj1.csv color=red  label=Missile \
+  --traj traj2.csv color=blue label=Aircraft
 ```
+
+Per-block keys: `color`, `colormap`, `label`, `model` (path to a `.mat` model),
+`mcolor` (model color, default gray), `scale` (model size), `lw` (line width).
+
+```bash
+pytrajectory \
+  --traj missile.csv color=red  label=Missile model=models/missile.mat scale=10 \
+  --traj target.csv  color=blue label=Target  model=models/f-16.mat   scale=10 mcolor=green \
+  --animate --trail
+```
+
+Colors accept names, hex (`#ff0000`), or `r,g,b` floats (e.g. `color=0.9,0.3,0`).
 
 ### Demos
 

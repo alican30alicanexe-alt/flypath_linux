@@ -184,7 +184,7 @@ def _model_matrices_along(sd, spline_indices, yaw_sign=-1.0, pitch_sign=-1.0,
     return mats
 
 
-def flypath3d(data, line_width=1, color=None, colormap=None,
+def flypath3d(data, line_width=15, color=None, colormap=None,
               show_grid=True, show_axes=True, title=None,
               background='white', off_screen=False, return_plotter=False,
               animate=False, save_animation=None,
@@ -202,8 +202,9 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
     ----------
     data : str or (N,3) array-like
         Path to CSV file, or (N, 3) array of [x, y, z] points.
-    line_width : int, default 1
-        Width of the trajectory line.
+    line_width : int, default 15
+        Width of the trajectory line on a fine scale (100 ~= the classic
+        default thickness; the default 15 is a thin line).
     show_markers : bool, default False
         Show green start / red end markers. Hidden by default.
     trail : bool, default False
@@ -288,7 +289,9 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
 
     # Compute tube radius relative to data range (scales with data)
     data_range = np.ptp(points, axis=0).max()
-    tube_radius = max(data_range * 0.0007 * line_width, 0.003)
+    # Fine-grained: line_width=100 ~= the classic default thickness; the
+    # default (15) is a thin line.
+    tube_radius = max(data_range * 7e-6 * line_width, 1e-4)
 
     # When animating with a trail, the line is revealed progressively as the
     # model passes over it, so skip drawing the full static tube up front.
@@ -654,7 +657,7 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
     for idx, (traj, points, info) in enumerate(zip(trajectories, all_points, all_infos)):
         color = traj.get('color', None)
         colormap = traj.get('colormap', None)
-        line_width = traj.get('line_width', 1)
+        line_width = traj.get('line_width', 15)
         label = traj.get('label', None)
         
         # Get column indices from auto-detection or user override
@@ -684,7 +687,7 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
         spline = _make_spline(points)
 
         # Tube radius relative to global range
-        tube_radius = max(global_range * 0.0007 * line_width, 0.003)
+        tube_radius = max(global_range * 7e-6 * line_width, 1e-4)
 
         # Skip the full static tube when it will be revealed as a trail.
         animating = animate or save_animation is not None

@@ -76,41 +76,72 @@ def demo_multi(animate=False, save_animation=None):
     )
 
 
-def parse_multi_arg(multi_args):
-    """Parse --multi arguments in format: file:color:label or file:color or just file.
-    
-    Returns list of trajectory dicts.
+def _parse_color(value):
+    """Return a color usable by PyVista: an (r, g, b) tuple for 'r,g,b' strings,
+    otherwise the string unchanged (name or hex)."""
+    if value is None:
+        return None
+    if ',' in value:
+        try:
+            return tuple(float(c) for c in value.split(','))
+        except ValueError:
+            return value
+    return value
+
+
+def parse_traj_blocks(blocks, defaults):
+    """Parse repeatable --traj blocks into (trajectories, models).
+
+    Each block is a token list: the first token is the trajectory file path and
+    the rest are key=value options. Recognized keys: color, colormap, label,
+    model, mcolor, scale, lw/linewidth/line-width. Missing options fall back to
+    the `defaults` dict (from the global --color/--colormap/--model/--scale/
+    --line-width flags).
+
+    Returns dicts in the shapes flypath3d_multi consumes.
     """
     trajectories = []
-    for arg in multi_args:
-        parts = arg.split(':')
-        filepath = parts[0]
-        color = parts[1] if len(parts) > 1 else None
-        label = parts[2] if len(parts) > 2 else None
-        traj = {'data': filepath, 'color': color}
+    models = []
+    for idx, block in enumerate(blocks):
+        if not block:
+            continue
+        path = block[0]
+        opts = {}
+        for tok in block[1:]:
+            if '=' not in tok:
+                raise ValueError(
+                    f"--traj option '{tok}' must be key=value (block: {path})")
+            key, val = tok.split('=', 1)
+            opts[key.strip().lower()] = val
+
+        color = _parse_color(opts.get('color', defaults.get('color')))
+        colormap = opts.get('colormap', defaults.get('colormap'))
+        label = opts.get('label')
+        lw = opts.get('lw', opts.get('linewidth', opts.get('line-width')))
+        line_width = int(lw) if lw is not None else defaults.get('line_width')
+
+        traj = {'data': path}
+        if colormap is not None:
+            traj['colormap'] = colormap
+        elif color is not None:
+            traj['color'] = color
+        if line_width is not None:
+            traj['line_width'] = line_width
         if label:
             traj['label'] = label
         trajectories.append(traj)
-    return trajectories
 
+        model_path = opts.get('model', defaults.get('model'))
+        if model_path:
+            scale = opts.get('scale', defaults.get('scale'))
+            models.append({
+                'path': model_path,
+                'trajectory_index': idx,
+                'color': _parse_color(opts.get('mcolor', 'gray')),
+                'scale': float(scale) if scale is not None else 1.0,
+            })
 
-def parse_model_arg(model_args):
-    """Parse --model arguments in format: file:traj_idx:color.
-    
-    Returns list of model dicts.
-    """
-    models = []
-    for arg in model_args:
-        parts = arg.split(':')
-        path = parts[0]
-        traj_idx = int(parts[1]) if len(parts) > 1 else 0
-        color = parts[2] if len(parts) > 2 else 'gray'
-        models.append({
-            'path': path,
-            'trajectory_index': traj_idx,
-            'color': color,
-        })
-    return models
+    return trajectories, (models or None)
 
 
 def main():
@@ -119,11 +150,16 @@ def main():
         epilog='Examples:\n'
                '  pytrajectory trajectory.csv\n'
                '  pytrajectory trajectory.csv --color blue\n'
+               '  pytrajectory trajectory.csv --model models/f-16.mat --scale 10 --animate\n'
                '  pytrajectory --demo spiral\n'
-               '  pytrajectory --demo all\n'
                '  pytrajectory --list-demos\n'
-               '  pytrajectory --multi traj1.csv:red traj2.csv:blue\n'
-               '  pytrajectory --multi missle.csv:red:Missile --models f16.mat:0:gray\n',
+               '  # Multiple trajectories: one --traj block each (path then key=value opts)\n'
+               '  pytrajectory \\\n'
+               '    --traj enemy.mat  color=red   model=models/f-16.mat scale=10 lw=20 \\\n'
+               '    --traj friend.mat color=blue  model=models/f-16.mat scale=10 \\\n'
+               '    --traj aam.mat    color=black model=models/missile.mat mcolor=yellow \\\n'
+               '    --animate --trail\n'
+               '  # keys: color, colormap, label, model, mcolor, scale, lw\n',
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
 
@@ -141,8 +177,9 @@ def main():
         help='Colormap name (e.g., "jet", "viridis", "plasma")'
     )
     parser.add_argument(
-        '--line-width', type=int, default=1,
-        help='Trajectory line width (default: 1)'
+        '--line-width', type=int, default=15,
+        help='Trajectory line width on a fine scale (default: 15, a thin line; '
+             '100 ~= the classic thickness)'
     )
     parser.add_argument(
         '--markers', action='store_true',
@@ -215,6 +252,11 @@ def main():
         help='Scale factor for 3D model size (default: 1.0)'
     )
     parser.add_argument(
+        '--scale', type=float, default=None,
+        help='Model size (alias for --model-scale; also the default scale for '
+             '--traj blocks). Wins over --model-scale if both are given.'
+    )
+    parser.add_argument(
         '--xlim', type=float, nargs=2, default=None,
         help='X-axis limits: min max (e.g., --xlim 0 1000)'
     )
@@ -263,14 +305,13 @@ def main():
         help='Render off-screen (no window)'
     )
 
-    # Multi-trajectory options
+    # Multi-trajectory: one repeatable --traj block per trajectory.
     parser.add_argument(
-        '--multi', nargs='+', default=None,
-        help='Multiple trajectories: file:color:label file:color ...'
-    )
-    parser.add_argument(
-        '--models', nargs='+', default=None,
-        help='3D models for multi mode: file:traj_idx:color file:idx:color ...'
+        '--traj', action='append', nargs='+', metavar='PATH KEY=VALUE',
+        help='Add a trajectory: a file path followed by key=value options '
+             '(color, colormap, label, model, mcolor, scale, lw). Repeat for '
+             'multiple trajectories. Global --color/--colormap/--model/--scale/'
+             '--line-width act as defaults.'
     )
 
     args = parser.parse_args()
@@ -286,6 +327,9 @@ def main():
         pitch_sign = -pitch_sign
     if args.flip_roll:
         roll_sign = -roll_sign
+
+    # Model size: --scale is an alias for --model-scale and wins if given.
+    model_scale = args.scale if args.scale is not None else args.model_scale
 
     # Handle --list-demos
     if args.list_demos:
@@ -313,10 +357,16 @@ def main():
         demos[args.demo]()
         return
 
-    # Handle --multi (multiple trajectories)
-    if args.multi:
-        trajectories = parse_multi_arg(args.multi)
-        models = parse_model_arg(args.models) if args.models else None
+    # Handle --traj (one or more trajectories)
+    if args.traj:
+        defaults = {
+            'color': args.color,
+            'colormap': args.colormap,
+            'model': args.model,
+            'scale': args.scale,
+            'line_width': args.line_width,
+        }
+        trajectories, models = parse_traj_blocks(args.traj, defaults)
         flypath3d_multi(
             trajectories,
             models=models,
@@ -328,7 +378,7 @@ def main():
             animate=args.animate,
             save_animation=args.save_animation,
             speed=args.speed,
-            model_scale=args.model_scale,
+            model_scale=model_scale,
             xlim=args.xlim,
             ylim=args.ylim,
             zlim=args.zlim,
@@ -362,7 +412,7 @@ def main():
             radians=args.rad,
             order=args.order,
             speed=args.speed,
-            model_scale=args.model_scale,
+            model_scale=model_scale,
             xlim=args.xlim,
             ylim=args.ylim,
             zlim=args.zlim,
