@@ -44,40 +44,53 @@ def _euler_to_matrix(pitch_deg, yaw_deg, roll_deg):
     return Rz @ Ry @ Rx
 
 
-def _build_frame_matrices(positions, pitch_deg, yaw_deg, roll_deg):
+def _alignment_rotation(direction):
+    """Rotation matrix that turns the model's nose (+X body axis) to point along
+    `direction`, keeping world +Z as "up" (yaw + pitch only, no roll).
+
+    Models here follow the aerospace body convention: nose along +X (the
+    longitudinal/roll axis), which matches the provided meshes (f-16, missile
+    are longest along X) and the roll/pitch/yaw columns in the trajectory data.
+    """
+    d = np.asarray(direction, dtype=float)
+    norm = np.linalg.norm(d)
+    if norm < 1e-12:
+        return np.eye(3)
+    d = d / norm
+    horiz = np.hypot(d[0], d[1])
+    yaw = np.arctan2(d[1], d[0])
+    pitch = np.arctan2(-d[2], horiz)  # matches Ry sign in _euler_to_matrix
+    return _euler_to_matrix([np.degrees(pitch)], [np.degrees(yaw)], [0.0])[0]
+
+
+def _trajectory_tangents(points, indices):
+    """Unit direction of travel at each of the given point indices (via central
+    differences), for aligning a model that has no attitude data."""
+    diffs = np.gradient(points, axis=0)
+    tang = diffs[indices]
+    norms = np.linalg.norm(tang, axis=1, keepdims=True)
+    norms[norms < 1e-12] = 1.0
+    return tang / norms
+
+
+def _build_frame_matrices(positions, pitch_deg, yaw_deg, roll_deg,
+                          base_rotation=None):
     """Build (N, 4, 4) transforms combining translation + rotation, suitable
     for assigning directly to actor.user_matrix per animation frame.
+
+    If `base_rotation` (3, 3) is given, it is applied on the left of every
+    frame's rotation — used to mount the model onto the trajectory's initial
+    heading so the data's per-frame angles read as attitude relative to that
+    launch direction.
     """
     n = len(positions)
     rot = _euler_to_matrix(pitch_deg, yaw_deg, roll_deg)
+    if base_rotation is not None:
+        rot = base_rotation @ rot
     mats = np.tile(np.eye(4), (n, 1, 1))
     mats[:, :3, :3] = rot
     mats[:, :3, 3] = positions
     return mats
-
-
-def _compute_trajectory_heading(points):
-    """Compute initial heading (yaw) and pitch from trajectory direction.
-    
-    Returns (yaw_deg, pitch_deg) that the model should face to align with
-    the trajectory's initial direction.
-    """
-    if len(points) < 2:
-        return 0.0, 0.0
-    
-    # Use first few points to get stable direction
-    n_avg = min(5, len(points))
-    avg_dir = points[n_avg - 1] - points[0]
-    
-    # Yaw = atan2(dy, dx) in horizontal plane
-    # Add 180° because models typically face -Z or need flipped heading
-    yaw = np.degrees(np.arctan2(avg_dir[1], avg_dir[0])) + 180
-    
-    # Pitch = atan2(dz, horizontal_distance)
-    horiz_dist = np.linalg.norm(avg_dir[:2])
-    pitch = np.degrees(np.arctan2(avg_dir[2], horiz_dist))
-    
-    return yaw, pitch
 
 
 def flypath3d(data, line_width=1, color=None, colormap=None, 
@@ -331,16 +344,13 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
 
         # Get orientation data if available
         n_data = len(full_data) if full_data is not None else 0
-        has_orientation = (full_data is not None and 
+        has_orientation = (full_data is not None and
                           n_data > max(pitch_col, yaw_col, roll_col))
-        
-        # Compute trajectory heading for model alignment
-        traj_yaw, traj_pitch = _compute_trajectory_heading(points)
-        
+
         if has_orientation:
             # Compute frame indices aligned to original data length
             data_frame_indices = np.linspace(0, n_data - 1, n_frames, dtype=int)
-            
+
             # Extract angles from the specified columns
             pitch_angles = full_data[data_frame_indices, pitch_col]
             yaw_angles = full_data[data_frame_indices, yaw_col]
@@ -351,17 +361,23 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
                 yaw_angles = np.degrees(yaw_angles)
                 roll_angles = np.degrees(roll_angles)
 
-            # Use the file's absolute orientation angles directly (no heading
-            # offset — the data already provides per-frame inertial angles)
+            # Mount the model onto the trajectory's initial heading, then apply
+            # the data's per-frame attitude (which is expressed relative to that
+            # launch direction) on top. This keeps the model aligned with the
+            # trajectory at the start and through the turns.
+            base_rotation = _alignment_rotation(points[min(4, len(points) - 1)]
+                                                - points[0])
             frame_matrices = _build_frame_matrices(
-                frame_positions, pitch_angles, yaw_angles, roll_angles)
+                frame_positions, pitch_angles, yaw_angles, roll_angles,
+                base_rotation=base_rotation)
         else:
-            # No orientation data: just align model with trajectory direction
-            pitch_angles = np.full(n_frames, traj_pitch)
-            yaw_angles = np.full(n_frames, traj_yaw)
-            roll_angles = np.zeros(n_frames)
-            frame_matrices = _build_frame_matrices(
-                frame_positions, pitch_angles, yaw_angles, roll_angles)
+            # No orientation data: point the model along the direction of travel
+            # at every frame so it follows the path.
+            tangents = _trajectory_tangents(sp, frame_indices)
+            rots = np.stack([_alignment_rotation(t) for t in tangents])
+            frame_matrices = np.tile(np.eye(4), (n_frames, 1, 1))
+            frame_matrices[:, :3, :3] = rots
+            frame_matrices[:, :3, 3] = frame_positions
 
         # Set initial position and orientation
         anim_actor.user_matrix = frame_matrices[0]
@@ -616,9 +632,11 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
             if z_scale != 1.0:
                 frame_positions[:, 2] = frame_positions[:, 2] * z_scale
 
-            # Compute trajectory heading for this trajectory
-            traj_yaw, traj_pitch = _compute_trajectory_heading(sd['points'])
-            
+            # Base mount rotation aligning the model's nose (+X) with this
+            # trajectory's initial heading.
+            base_rotation = _alignment_rotation(
+                sd['points'][min(4, len(sd['points']) - 1)] - sd['points'][0])
+
             # Check if a model is assigned to this trajectory
             assigned_model = None
             model_color = 'gray'
@@ -666,15 +684,19 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                         yaw_angles = np.degrees(yaw_angles)
                         roll_angles = np.degrees(roll_angles)
 
-                    # Use the file's absolute orientation angles directly
+                    # Mount onto the initial heading, then apply the data's
+                    # per-frame attitude relative to it.
                     frame_matrices = _build_frame_matrices(
-                        frame_positions, pitch_angles, yaw_angles, roll_angles)
+                        frame_positions, pitch_angles, yaw_angles, roll_angles,
+                        base_rotation=base_rotation)
                 else:
-                    pitch_angles = np.full(local_frames, traj_pitch)
-                    yaw_angles = np.full(local_frames, traj_yaw)
-                    roll_angles = np.zeros(local_frames)
-                    frame_matrices = _build_frame_matrices(
-                        frame_positions, pitch_angles, yaw_angles, roll_angles)
+                    # No attitude data: point the model along the direction of
+                    # travel at every frame.
+                    tangents = _trajectory_tangents(sp_traj, local_indices)
+                    rots = np.stack([_alignment_rotation(t) for t in tangents])
+                    frame_matrices = np.tile(np.eye(4), (local_frames, 1, 1))
+                    frame_matrices[:, :3, :3] = rots
+                    frame_matrices[:, :3, 3] = frame_positions
 
                 frame_data.append({
                     'actor': actor,
