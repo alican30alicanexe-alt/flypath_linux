@@ -320,7 +320,10 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
             model_center = np.array(model_mesh.center)
             model_mesh = model_mesh.translate(-model_center)
             model_mesh = model_mesh.scale([scale_factor, scale_factor, scale_factor])
-            
+            # These meshes point nose along -X; flip 180 about the vertical axis
+            # so the nose is +X, matching the alignment convention.
+            model_mesh = model_mesh.rotate_z(180)
+
             # Add model to plotter
             anim_actor = plotter.add_mesh(
                 model_mesh, color='gray',
@@ -662,7 +665,9 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                 model_center = np.array(model_mesh.center)
                 model_mesh = model_mesh.translate(-model_center)
                 model_mesh = model_mesh.scale([scale_factor, scale_factor, scale_factor])
-                
+                # Nose points -X in these meshes; flip so nose is +X.
+                model_mesh = model_mesh.rotate_z(180)
+
                 actor = plotter.add_mesh(
                     model_mesh, color=model_color,
                 )
