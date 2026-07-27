@@ -141,8 +141,17 @@ def main():
         help='Colormap name (e.g., "jet", "viridis", "plasma")'
     )
     parser.add_argument(
-        '--line-width', type=int, default=2,
-        help='Trajectory line width (default: 2)'
+        '--line-width', type=int, default=1,
+        help='Trajectory line width (default: 1)'
+    )
+    parser.add_argument(
+        '--markers', action='store_true',
+        help='Show start (green) and end (red) markers (hidden by default)'
+    )
+    parser.add_argument(
+        '--trail', action='store_true',
+        help='Reveal the trajectory line progressively as the model flies over '
+             'it (like a real flight trail); requires --animate'
     )
     parser.add_argument(
         '--title', default=None,
@@ -327,6 +336,8 @@ def main():
             yaw_sign=yaw_sign,
             pitch_sign=pitch_sign,
             roll_sign=roll_sign,
+            show_markers=args.markers,
+            trail=args.trail,
         )
         return
 
@@ -359,6 +370,8 @@ def main():
             yaw_sign=yaw_sign,
             pitch_sign=pitch_sign,
             roll_sign=roll_sign,
+            show_markers=args.markers,
+            trail=args.trail,
         )
         return
 

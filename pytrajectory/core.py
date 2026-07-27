@@ -100,7 +100,8 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
               model=None, pitch_col=3, yaw_col=4, roll_col=5,
               radians=False, order='pyr', speed=3.0, model_scale=1.0,
               xlim=None, ylim=None, zlim=None, z_scale=1.0,
-              yaw_sign=-1.0, pitch_sign=-1.0, roll_sign=1.0):
+              yaw_sign=-1.0, pitch_sign=-1.0, roll_sign=1.0,
+              show_markers=False, trail=False):
     """MATLAB-like 3D trajectory plot with precision axis scaling.
     
     Renders a 3D trajectory with proper equal aspect ratio, MATLAB-style
@@ -110,8 +111,13 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
     ----------
     data : str or (N,3) array-like
         Path to CSV file, or (N, 3) array of [x, y, z] points.
-    line_width : int, default 2
+    line_width : int, default 1
         Width of the trajectory line.
+    show_markers : bool, default False
+        Show green start / red end markers. Hidden by default.
+    trail : bool, default False
+        During animation, reveal the trajectory line progressively as the model
+        passes over it (like a real flight trail) instead of drawing it upfront.
     color : str, optional
         Single color for the trajectory line (e.g., 'blue', '#ff0000').
         Defaults to 'blue' if not specified.
@@ -191,34 +197,35 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
     
     # Compute tube radius relative to data range (scales with data)
     data_range = np.ptp(points, axis=0).max()
-    tube_radius = max(data_range * 0.0015 * line_width, 0.005)
-    
-    # Create tube mesh from the spline
-    tube = spline.tube(radius=tube_radius)
-    
-    if use_colormap is not None:
-        # Color by position along the path using a colormap
-        n_pts = len(spline.points)
-        position_scalar = np.linspace(0, 1, n_pts)
-        spline.point_data['pos'] = position_scalar
-        # Re-tube with scalars
+    tube_radius = max(data_range * 0.0007 * line_width, 0.003)
+
+    # When animating with a trail, the line is revealed progressively as the
+    # model passes over it, so skip drawing the full static tube up front.
+    animating = animate or save_animation is not None
+    draw_full_line = not (trail and animating)
+
+    if draw_full_line:
         tube = spline.tube(radius=tube_radius)
-        plotter.add_mesh(tube, scalars='pos', cmap=use_colormap,
-                         smooth_shading=True, show_scalar_bar=False)
-    else:
-        plotter.add_mesh(tube, color=use_color, smooth_shading=True)
-    
+        if use_colormap is not None:
+            # Color by position along the path using a colormap
+            n_pts = len(spline.points)
+            spline.point_data['pos'] = np.linspace(0, 1, n_pts)
+            tube = spline.tube(radius=tube_radius)
+            plotter.add_mesh(tube, scalars='pos', cmap=use_colormap,
+                             smooth_shading=True, show_scalar_bar=False)
+        else:
+            plotter.add_mesh(tube, color=use_color, smooth_shading=True)
+
     # Marker radius: 0.5% of bounding box diagonal for consistent visual size
     bbox_diagonal = np.linalg.norm([data_range, data_range, data_range])
     marker_radius = bbox_diagonal * 0.005
-    
-    # Start marker: green sphere
-    start_mesh = pv.Sphere(radius=marker_radius, center=points[0])
-    plotter.add_mesh(start_mesh, color='green', smooth_shading=True)
-    
-    # End marker: red sphere
-    end_mesh = pv.Sphere(radius=marker_radius, center=points[-1])
-    plotter.add_mesh(end_mesh, color='red', smooth_shading=True)
+
+    # Start/end markers (green/red) are hidden unless requested.
+    if show_markers:
+        plotter.add_mesh(pv.Sphere(radius=marker_radius, center=points[0]),
+                         color='green', smooth_shading=True)
+        plotter.add_mesh(pv.Sphere(radius=marker_radius, center=points[-1]),
+                         color='red', smooth_shading=True)
     
     # Compute tight bounds with 10% padding (or use manual limits if provided)
     data_min = points.min(axis=0)
@@ -301,7 +308,20 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
         # Use ~30 fps for smooth animation
         n_frames = max(10, min(90, int(speed * 30)))
         frame_indices = np.linspace(0, n_spline - 1, n_frames, dtype=int)
-        
+
+        # Progressive trail: a tube that grows behind the model as it moves.
+        # Use a downsampled path so rebuilding the tube each frame stays cheap.
+        trail_actor = None
+        if trail:
+            n_trail = min(n_spline, 300)
+            trail_pts = sp[np.linspace(0, n_spline - 1, n_trail, dtype=int)]
+
+            def _trail_tube(frac):
+                k = max(2, int(round(frac * (n_trail - 1))) + 1)
+                return pv.Spline(trail_pts[:k]).tube(radius=tube_radius)
+            trail_actor = plotter.add_mesh(_trail_tube(0.0), color=use_color,
+                                           smooth_shading=True)
+
         # Load 3D model if provided, otherwise use sphere
         if model is not None:
             # Load the 3D model mesh
@@ -400,6 +420,8 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
             frames = []
             for f_idx in range(n_frames):
                 anim_actor.user_matrix = frame_matrices[f_idx]
+                if trail_actor is not None:
+                    trail_actor.mapper.dataset = _trail_tube(frame_indices[f_idx] / max(1, n_spline - 1))
                 # screenshot() alone does not re-render after a transform change,
                 # so force a render each frame or every frame would be identical.
                 plotter.render()
@@ -414,6 +436,8 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
             def update_frame(step):
                 f_idx = frame_index[0] % n_frames
                 anim_actor.user_matrix = frame_matrices[f_idx]
+                if trail_actor is not None:
+                    trail_actor.mapper.dataset = _trail_tube(frame_indices[f_idx] / max(1, n_spline - 1))
                 frame_index[0] += 1
             
             duration_ms = max(10, int((speed * 1000) // n_frames))
@@ -438,7 +462,8 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     return_plotter=False, animate=False, save_animation=None,
                     radians=False, order='pyr', speed=3.0, model_scale=1.0,
                     xlim=None, ylim=None, zlim=None, z_scale=1.0,
-                    yaw_sign=-1.0, pitch_sign=-1.0, roll_sign=1.0):
+                    yaw_sign=-1.0, pitch_sign=-1.0, roll_sign=1.0,
+                    show_markers=False, trail=False):
     """Plot multiple trajectories in the same 3D scene, optionally with 3D models.
     
     Parameters
@@ -520,7 +545,7 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
     for idx, (traj, points, info) in enumerate(zip(trajectories, all_points, all_infos)):
         color = traj.get('color', None)
         colormap = traj.get('colormap', None)
-        line_width = traj.get('line_width', 2)
+        line_width = traj.get('line_width', 1)
         label = traj.get('label', None)
         
         # Get column indices from auto-detection or user override
@@ -551,30 +576,31 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
         spline = pv.Spline(points, n_interp)
         
         # Tube radius relative to global range
-        tube_radius = max(global_range * 0.0015 * line_width, 0.005)
-        tube = spline.tube(radius=tube_radius)
-        
-        if use_colormap is not None:
-            n_pts = len(spline.points)
-            position_scalar = np.linspace(0, 1, n_pts)
-            spline.point_data['pos'] = position_scalar
+        tube_radius = max(global_range * 0.0007 * line_width, 0.003)
+
+        # Skip the full static tube when it will be revealed as a trail.
+        animating = animate or save_animation is not None
+        if not (trail and animating):
             tube = spline.tube(radius=tube_radius)
-            plotter.add_mesh(tube, scalars='pos', cmap=use_colormap,
-                             smooth_shading=True, show_scalar_bar=False,
-                             label=label)
-        else:
-            plotter.add_mesh(tube, color=use_color, smooth_shading=True,
-                             label=label)
-        
-        # Start/end markers
+            if use_colormap is not None:
+                n_pts = len(spline.points)
+                spline.point_data['pos'] = np.linspace(0, 1, n_pts)
+                tube = spline.tube(radius=tube_radius)
+                plotter.add_mesh(tube, scalars='pos', cmap=use_colormap,
+                                 smooth_shading=True, show_scalar_bar=False,
+                                 label=label)
+            else:
+                plotter.add_mesh(tube, color=use_color, smooth_shading=True,
+                                 label=label)
+
+        # Start/end markers (hidden unless requested)
         bbox_diagonal = np.linalg.norm([global_range, global_range, global_range])
         marker_radius = bbox_diagonal * 0.005
-        
-        start_mesh = pv.Sphere(radius=marker_radius, center=points[0])
-        plotter.add_mesh(start_mesh, color='green', smooth_shading=True)
-        
-        end_mesh = pv.Sphere(radius=marker_radius, center=points[-1])
-        plotter.add_mesh(end_mesh, color='red', smooth_shading=True)
+        if show_markers:
+            plotter.add_mesh(pv.Sphere(radius=marker_radius, center=points[0]),
+                             color='green', smooth_shading=True)
+            plotter.add_mesh(pv.Sphere(radius=marker_radius, center=points[-1]),
+                             color='red', smooth_shading=True)
         
         spline_data.append({
             'spline': spline,
@@ -584,6 +610,8 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
             'roll_col': roll_col,
             'from_mat': info.get('from_mat', False),
             'points': points,
+            'tube_radius': tube_radius,
+            'color': use_color,
         })
     
     # Grid
@@ -636,6 +664,7 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
         
         # Pre-compute all frame data for each actor
         frame_data = []
+        trails = []  # (actor, sp_traj, local_indices, tube_radius) for progressive reveal
         for idx, (traj, sd) in enumerate(zip(trajectories, spline_data)):
             sp_traj = sd['spline'].points
             # Use each trajectory's own spline length for frame indices
@@ -643,6 +672,17 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
             local_frames = min(n_frames, n_local)
             local_indices = np.linspace(0, n_local - 1, local_frames, dtype=int)
             frame_positions = sp_traj[local_indices].copy()
+
+            # Progressive trail actor for this trajectory (downsampled path so
+            # rebuilding the tube each frame stays cheap).
+            if trail:
+                tr = sd['tube_radius']
+                n_t = min(len(sp_traj), 300)
+                tpts = sp_traj[np.linspace(0, len(sp_traj) - 1, n_t, dtype=int)]
+                tube0 = pv.Spline(tpts[:2]).tube(radius=tr)
+                trail_actor = plotter.add_mesh(tube0, color=sd['color'],
+                                               smooth_shading=True)
+                trails.append((trail_actor, tpts, n_t, tr))
             # See flypath3d(): moving actors need their z pre-scaled to ride the
             # vertically-exaggerated scene (set_scale doesn't move translations).
             if z_scale != 1.0:
@@ -743,6 +783,12 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     'is_model': False,
                 })
         
+        def _grow_trails(f_idx):
+            frac = f_idx / max(1, n_frames - 1)
+            for actor, tpts, n_t, tr in trails:
+                k = max(2, int(round(frac * (n_t - 1))) + 1)
+                actor.mapper.dataset = pv.Spline(tpts[:k]).tube(radius=tr)
+
         if save_animation is not None:
             # For GIF saving: render each frame via screenshot (offscreen)
             import imageio
@@ -756,6 +802,7 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     else:
                         pos = fd['positions'][li]
                         fd['actor'].SetPosition(pos[0], pos[1], pos[2])
+                _grow_trails(f_idx)
                 # Force a render; screenshot() alone won't reflect the updates.
                 plotter.render()
                 img = plotter.screenshot(return_img=True)
@@ -776,8 +823,9 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     else:
                         pos = fd['positions'][li]
                         fd['actor'].SetPosition(pos[0], pos[1], pos[2])
+                _grow_trails(f_idx)
                 frame_index[0] += 1
-            
+
             duration_ms = max(10, int((speed * 1000) // n_frames))
             plotter.add_timer_event(100000, duration_ms, update_frame)
         
