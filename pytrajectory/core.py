@@ -99,7 +99,8 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
               animate=False, save_animation=None,
               model=None, pitch_col=3, yaw_col=4, roll_col=5,
               radians=False, order='pyr', speed=3.0, model_scale=1.0,
-              xlim=None, ylim=None, zlim=None, z_scale=1.0):
+              xlim=None, ylim=None, zlim=None, z_scale=1.0,
+              yaw_sign=-1.0, pitch_sign=-1.0, roll_sign=1.0):
     """MATLAB-like 3D trajectory plot with precision axis scaling.
     
     Renders a 3D trajectory with proper equal aspect ratio, MATLAB-style
@@ -364,10 +365,18 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
                 yaw_angles = np.degrees(yaw_angles)
                 roll_angles = np.degrees(roll_angles)
 
+            # Map the input angle convention onto the render matrices. The
+            # bundled flight data (and MATLAB flypath3d) use the aerospace
+            # convention: yaw positive = nose right (compass/clockwise), pitch
+            # positive = nose up. Our matrices are math-convention, so yaw and
+            # pitch are negated by default. Flip a sign for data that differs.
+            pitch_angles = pitch_sign * pitch_angles
+            yaw_angles = yaw_sign * yaw_angles
+            roll_angles = roll_sign * roll_angles
+
             # Mount the model onto the trajectory's initial heading, then apply
-            # the data's per-frame attitude (which is expressed relative to that
-            # launch direction) on top. This keeps the model aligned with the
-            # trajectory at the start and through the turns.
+            # the data's per-frame attitude (expressed relative to that launch
+            # direction) on top, keeping it aligned through the turns.
             base_rotation = _alignment_rotation(points[min(4, len(points) - 1)]
                                                 - points[0])
             frame_matrices = _build_frame_matrices(
@@ -391,6 +400,9 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
             frames = []
             for f_idx in range(n_frames):
                 anim_actor.user_matrix = frame_matrices[f_idx]
+                # screenshot() alone does not re-render after a transform change,
+                # so force a render each frame or every frame would be identical.
+                plotter.render()
                 img = plotter.screenshot(return_img=True)
                 frames.append(img)
             imageio.mimsave(save_animation, frames, fps=30, loop=0)
@@ -425,7 +437,8 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     title=None, background='white', off_screen=False,
                     return_plotter=False, animate=False, save_animation=None,
                     radians=False, order='pyr', speed=3.0, model_scale=1.0,
-                    xlim=None, ylim=None, zlim=None, z_scale=1.0):
+                    xlim=None, ylim=None, zlim=None, z_scale=1.0,
+                    yaw_sign=-1.0, pitch_sign=-1.0, roll_sign=1.0):
     """Plot multiple trajectories in the same 3D scene, optionally with 3D models.
     
     Parameters
@@ -689,6 +702,11 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                         yaw_angles = np.degrees(yaw_angles)
                         roll_angles = np.degrees(roll_angles)
 
+                    # Apply the input-convention signs (see flypath3d()).
+                    pitch_angles = pitch_sign * pitch_angles
+                    yaw_angles = yaw_sign * yaw_angles
+                    roll_angles = roll_sign * roll_angles
+
                     # Mount onto the initial heading, then apply the data's
                     # per-frame attitude relative to it.
                     frame_matrices = _build_frame_matrices(
@@ -738,6 +756,8 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     else:
                         pos = fd['positions'][li]
                         fd['actor'].SetPosition(pos[0], pos[1], pos[2])
+                # Force a render; screenshot() alone won't reflect the updates.
+                plotter.render()
                 img = plotter.screenshot(return_img=True)
                 frames.append(img)
             imageio.mimsave(save_animation, frames, fps=30, loop=0)

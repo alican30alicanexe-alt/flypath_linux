@@ -218,6 +218,24 @@ def main():
         help='Z-axis limits: min max (e.g., --zlim 0 500)'
     )
     parser.add_argument(
+        '--math', action='store_true',
+        help='Use the math angle convention (yaw CCW-positive, pitch nose-down-'
+             'positive) instead of the default aerospace convention (yaw '
+             'compass/clockwise-positive, pitch nose-up-positive)'
+    )
+    parser.add_argument(
+        '--flip-yaw', action='store_true',
+        help='Invert yaw sign (use if the model turns the wrong way / too far)'
+    )
+    parser.add_argument(
+        '--flip-pitch', action='store_true',
+        help='Invert pitch sign (use if the model pitches the wrong way)'
+    )
+    parser.add_argument(
+        '--flip-roll', action='store_true',
+        help='Invert roll sign (use if the model banks the wrong way)'
+    )
+    parser.add_argument(
         '--z-scale', type=float, default=1.0,
         help='Vertical exaggeration factor for the z-axis (default: 1.0, no change). '
              'E.g. --z-scale 5 stretches z 5x for flat/altitude-limited trajectories '
@@ -247,6 +265,18 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # Resolve angle-convention signs. Default is aerospace; --math switches to
+    # the math convention; --flip-* invert individual axes on top.
+    yaw_sign = 1.0 if args.math else -1.0
+    pitch_sign = 1.0 if args.math else -1.0
+    roll_sign = 1.0
+    if args.flip_yaw:
+        yaw_sign = -yaw_sign
+    if args.flip_pitch:
+        pitch_sign = -pitch_sign
+    if args.flip_roll:
+        roll_sign = -roll_sign
 
     # Handle --list-demos
     if args.list_demos:
@@ -294,6 +324,9 @@ def main():
             ylim=args.ylim,
             zlim=args.zlim,
             z_scale=args.z_scale,
+            yaw_sign=yaw_sign,
+            pitch_sign=pitch_sign,
+            roll_sign=roll_sign,
         )
         return
 
@@ -323,6 +356,9 @@ def main():
             ylim=args.ylim,
             zlim=args.zlim,
             z_scale=args.z_scale,
+            yaw_sign=yaw_sign,
+            pitch_sign=pitch_sign,
+            roll_sign=roll_sign,
         )
         return
 
