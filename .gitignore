@@ -31,3 +31,6 @@ env.txt
 # Build artifacts
 *.speccombat_example.png
 combat_example.gif
+benchmark_results.csv
+_bench*.csv
+_bench.gif
