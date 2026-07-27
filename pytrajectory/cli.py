@@ -138,6 +138,9 @@ def parse_traj_blocks(blocks, defaults):
             traj['line_width'] = line_width
         if label:
             traj['label'] = label
+        face = opts.get('face', defaults.get('face'))
+        if face:
+            traj['face'] = face
         trajectories.append(traj)
 
         model_path = opts.get('model', defaults.get('model'))
@@ -318,9 +321,16 @@ def main():
     parser.add_argument(
         '--traj', action='append', nargs='+', metavar='PATH KEY=VALUE',
         help='Add a trajectory: a file path followed by key=value options '
-             '(color, colormap, label, model, mcolor, scale, lw). Repeat for '
-             'multiple trajectories. Global --color/--colormap/--model/--scale/'
-             '--line-width act as defaults.'
+             '(color, colormap, label, model, mcolor, scale, lw, face). Repeat '
+             'for multiple trajectories. Global --color/--colormap/--model/'
+             '--scale/--line-width/--face act as defaults.'
+    )
+    parser.add_argument(
+        '--face', default='data', choices=['data', 'path'],
+        help='How the model points: "data" uses the attitude columns (default), '
+             '"path" aligns the model to the direction of travel. Use "path" '
+             'for long projectiles (e.g. a scaled-up missile) whose attitude '
+             'data wobbles and makes them slalom.'
     )
 
     args = parser.parse_args()
@@ -374,6 +384,7 @@ def main():
             'model': args.model,
             'scale': model_scale,
             'line_width': args.line_width,
+            'face': args.face,
         }
         trajectories, models = parse_traj_blocks(args.traj, defaults)
         flypath3d_multi(
@@ -397,6 +408,7 @@ def main():
             roll_sign=roll_sign,
             show_markers=args.markers,
             trail=args.trail,
+            face=args.face,
         )
         return
 
@@ -431,6 +443,7 @@ def main():
             roll_sign=roll_sign,
             show_markers=args.markers,
             trail=args.trail,
+            face=args.face,
         )
         return
 

@@ -96,7 +96,10 @@ pytrajectory \
 ```
 
 Per-block keys: `color`, `colormap`, `label`, `model` (path to a `.mat` model),
-`mcolor` (model color, default gray), `scale` (model size), `lw` (line width).
+`mcolor` (model color, default gray), `scale` (model size), `lw` (line width),
+`face` (`data` = use attitude columns, default; `path` = align to direction of
+travel — use for long projectiles like a scaled-up missile whose attitude data
+would otherwise make them slalom off the path).
 
 ```bash
 pytrajectory \

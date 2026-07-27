@@ -26,13 +26,25 @@ def _make_spline(points, max_ctrl=1000, max_interp=6000):
 
 
 def _prepare_model_mesh(path, target_size):
-    """Load a model mesh, center it, scale it to `target_size`, and flip it so
-    its nose points +X (the meshes here point -X)."""
+    """Load a model mesh, anchor it on its body axis, scale it to `target_size`,
+    and flip it so its nose points +X (the meshes here point -X).
+
+    The anchor (the point placed on the trajectory) is the bounding-box center
+    along the longest axis — so the model stays centered fore-and-aft — but the
+    vertex centroid across the other two axes, so the path runs through the body
+    centerline rather than the bounding-box center. Otherwise a protrusion like
+    an aircraft's tail fin lifts the box center above the fuselage, and the path
+    (and trail) floats over the model — increasingly so as it is scaled up.
+    """
     mesh = load_3d_model(path)
     b = mesh.bounds
-    size = max(b[1] - b[0], b[3] - b[2], b[5] - b[4])
+    extents = np.array([b[1] - b[0], b[3] - b[2], b[5] - b[4]])
+    size = extents.max()
     factor = target_size / size if size > 0 else 1.0
-    mesh = mesh.translate(-np.array(mesh.center))
+    long_axis = int(np.argmax(extents))
+    anchor = np.array(mesh.points).mean(axis=0)          # body centroid
+    anchor[long_axis] = (b[2 * long_axis] + b[2 * long_axis + 1]) / 2  # mid-length
+    mesh = mesh.translate(-anchor)
     mesh = mesh.scale([factor, factor, factor])
     return mesh.rotate_z(180)
 
@@ -116,6 +128,13 @@ def _mount_base(init_dir, full_data, pitch_col, yaw_col, from_mat,
     return base_align @ r0.T
 
 
+def _face_is_path(face):
+    """True if the model should face the path tangent (velocity) rather than the
+    data's attitude. Useful for long/thin projectiles whose attitude data wobbles
+    around the smooth path and slaloms when scaled up."""
+    return str(face).lower() in ('path', 'velocity', 'tangent', 'vel')
+
+
 def _trajectory_tangents(points, indices):
     """Unit direction of travel at each of the given point indices (via central
     differences), for aligning a model that has no attitude data."""
@@ -147,11 +166,11 @@ def _build_frame_matrices(positions, pitch_deg, yaw_deg, roll_deg,
 
 
 def _model_matrices_along(sd, spline_indices, yaw_sign=-1.0, pitch_sign=-1.0,
-                          roll_sign=1.0, radians=False):
+                          roll_sign=1.0, radians=False, face='data'):
     """Compute (N, 4, 4) placement transforms for a model at the given spline
     indices of a trajectory, oriented by the trajectory's attitude data (or by
-    the direction of travel when no attitude data is present). Shared by the
-    static multi-placement path."""
+    the direction of travel when no attitude data is present, or when
+    face='path'). Shared by the static multi-placement path."""
     sp = sd['spline'].points
     n_spline = len(sp)
     positions = sp[spline_indices]
@@ -160,7 +179,8 @@ def _model_matrices_along(sd, spline_indices, yaw_sign=-1.0, pitch_sign=-1.0,
     fd = sd['full_data']
     n_data = len(fd) if fd is not None else 0
     has_orient = (fd is not None and
-                  n_data > max(sd['pitch_col'], sd['yaw_col'], sd['roll_col']))
+                  n_data > max(sd['pitch_col'], sd['yaw_col'], sd['roll_col'])
+                  and not _face_is_path(face))
 
     if has_orient:
         base_rotation = _mount_base(init_dir, fd, sd['pitch_col'], sd['yaw_col'],
@@ -192,7 +212,7 @@ def flypath3d(data, line_width=50, color=None, colormap=None,
               radians=False, order='pyr', speed=3.0, model_scale=1.0,
               xlim=None, ylim=None, zlim=None, z_scale=1.0,
               yaw_sign=-1.0, pitch_sign=-1.0, roll_sign=1.0,
-              show_markers=False, trail=False):
+              show_markers=False, trail=False, face='data'):
     """MATLAB-like 3D trajectory plot with precision axis scaling.
     
     Renders a 3D trajectory with proper equal aspect ratio, MATLAB-style
@@ -425,26 +445,9 @@ def flypath3d(data, line_width=50, color=None, colormap=None,
 
         # Load 3D model if provided, otherwise use sphere
         if model is not None:
-            # Load the 3D model mesh
-            model_mesh = load_3d_model(model)
-            
-            # Scale model to appropriate size relative to trajectory
-            model_bounds = model_mesh.bounds
-            model_size = max(
-                model_bounds[1] - model_bounds[0],  # x range
-                model_bounds[3] - model_bounds[2],  # y range
-                model_bounds[5] - model_bounds[4]   # z range
-            )
-            target_size = data_range * 0.05 * model_scale  # Model will be 5% of data range
-            scale_factor = target_size / model_size if model_size > 0 else 1.0
-            
-            # Center the model at origin (create new mesh, avoid inplace)
-            model_center = np.array(model_mesh.center)
-            model_mesh = model_mesh.translate(-model_center)
-            model_mesh = model_mesh.scale([scale_factor, scale_factor, scale_factor])
-            # These meshes point nose along -X; flip 180 about the vertical axis
-            # so the nose is +X, matching the alignment convention.
-            model_mesh = model_mesh.rotate_z(180)
+            # Load, anchor on the body axis, and scale to ~5% of the data range.
+            target_size = data_range * 0.05 * model_scale
+            model_mesh = _prepare_model_mesh(model, target_size)
 
             # Add model to plotter
             anim_actor = plotter.add_mesh(
@@ -470,7 +473,8 @@ def flypath3d(data, line_width=50, color=None, colormap=None,
         # Get orientation data if available
         n_data = len(full_data) if full_data is not None else 0
         has_orientation = (full_data is not None and
-                          n_data > max(pitch_col, yaw_col, roll_col))
+                          n_data > max(pitch_col, yaw_col, roll_col)
+                          and not _face_is_path(face))
 
         if has_orientation:
             # Compute frame indices aligned to original data length
@@ -567,7 +571,7 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     xlim=None, ylim=None, zlim=None, z_scale=1.0,
                     yaw_sign=-1.0, pitch_sign=-1.0, roll_sign=1.0,
                     show_markers=False, trail=False,
-                    view=None, window_size=None):
+                    view=None, window_size=None, face='data'):
     """Plot multiple trajectories in the same 3D scene, optionally with 3D models.
 
     view : str or (azimuth, elevation), optional
@@ -806,8 +810,9 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
 
             n_sp = len(sd['spline'].points)
             place_idx = np.linspace(0, n_sp - 1, count, dtype=int)
+            traj_face = trajectories[idx].get('face', face)
             mats = _model_matrices_along(sd, place_idx, yaw_sign, pitch_sign,
-                                         roll_sign, radians)
+                                         roll_sign, radians, traj_face)
             if z_scale != 1.0:
                 mats[:, 2, 3] = mats[:, 2, 3] * z_scale
             for k in range(count):
@@ -891,9 +896,11 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                 # Pre-compute orientations
                 fd = sd['full_data']
                 n_data = len(fd) if fd is not None else 0
-                has_orient = (fd is not None and 
-                             n_data > max(sd['pitch_col'], sd['yaw_col'], sd['roll_col']))
-                
+                traj_face = traj.get('face', face)
+                has_orient = (fd is not None and
+                             n_data > max(sd['pitch_col'], sd['yaw_col'], sd['roll_col'])
+                             and not _face_is_path(traj_face))
+
                 if has_orient:
                     data_frame_indices = np.linspace(0, n_data - 1, local_frames, dtype=int)
                     pitch_angles = fd[data_frame_indices, sd['pitch_col']]

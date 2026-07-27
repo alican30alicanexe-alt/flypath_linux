@@ -21,7 +21,8 @@ ORANGE = (0.89, 0.47, 0.00)  # missile
 trajectories = [
     {"data": "examples/trajectory_friend.mat", "color": RED},
     {"data": "examples/trajectory_enemy.mat", "color": GRAY},
-    {"data": "examples/trajectory_aam.mat", "color": ORANGE},
+    # The missile is long/thin, so face it along the path to avoid slalom.
+    {"data": "examples/trajectory_aam.mat", "color": ORANGE, "face": "path"},
 ]
 
 # One model per trajectory. `scale` is in our convention (fraction of the scene
