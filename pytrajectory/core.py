@@ -9,6 +9,22 @@ from pathlib import Path
 from .io import load_trajectory, load_3d_model
 
 
+def _make_spline(points, max_ctrl=1000, max_interp=6000):
+    """Build a smooth spline through the path.
+
+    pv.Spline fits a parametric spline whose cost explodes with the number of
+    control points, so dense trajectories (tens of thousands of points) are
+    downsampled to at most `max_ctrl` control points first — otherwise building
+    the spline effectively hangs. The interpolated resolution is also capped.
+    """
+    points = np.asarray(points, dtype=float)
+    n = len(points)
+    if n > max_ctrl:
+        points = points[np.linspace(0, n - 1, max_ctrl, dtype=int)]
+    n_interp = min(max(len(points), len(points) * 10), max_interp)
+    return pv.Spline(points, n_interp)
+
+
 def _euler_to_matrix(pitch_deg, yaw_deg, roll_deg):
     """Vectorized rotation matrices for arrays of Euler angles (degrees).
 
@@ -191,10 +207,10 @@ def flypath3d(data, line_width=1, color=None, colormap=None,
     plotter = pv.Plotter(off_screen=off_screen or is_save)
     plotter.background_color = background
     
-    # Create trajectory line as a spline for smoothness
-    n_interp = max(len(points), len(points) * 10)
-    spline = pv.Spline(points, n_interp)
-    
+    # Create trajectory line as a spline for smoothness (downsampled control
+    # points so dense trajectories don't stall the spline fit).
+    spline = _make_spline(points)
+
     # Compute tube radius relative to data range (scales with data)
     data_range = np.ptp(points, axis=0).max()
     tube_radius = max(data_range * 0.0007 * line_width, 0.003)
@@ -571,10 +587,9 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
         use_color = color if color is not None else 'blue'
         use_colormap = colormap if colormap is not None else None
         
-        # Create spline
-        n_interp = max(len(points), len(points) * 10)
-        spline = pv.Spline(points, n_interp)
-        
+        # Create spline (downsampled control points to keep the fit fast)
+        spline = _make_spline(points)
+
         # Tube radius relative to global range
         tube_radius = max(global_range * 0.0007 * line_width, 0.003)
 
