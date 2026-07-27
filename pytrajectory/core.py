@@ -405,12 +405,19 @@ def flypath3d(data, line_width=50, color=None, colormap=None,
 
         # Progressive trail: a tube that grows behind the model as it moves.
         # Use a downsampled path so rebuilding the tube each frame stays cheap.
+        # The trail ends about half a model-length behind the current position
+        # so it meets the model's tail instead of running through its middle.
         trail_actor = None
         if trail:
             n_trail = min(n_spline, 300)
             trail_pts = sp[np.linspace(0, n_spline - 1, n_trail, dtype=int)]
+            total_len = np.linalg.norm(np.diff(trail_pts, axis=0), axis=1).sum()
+            back = (data_range * 0.05 * model_scale) * 0.45 if model is not None \
+                else marker_radius
+            frac_off = (back / total_len) if total_len > 0 else 0.0
 
             def _trail_tube(frac):
+                frac = max(0.0, frac - frac_off)
                 k = max(2, int(round(frac * (n_trail - 1))) + 1)
                 return pv.Spline(trail_pts[:k]).tube(radius=tube_radius)
             trail_actor = plotter.add_mesh(_trail_tube(0.0), color=use_color,
@@ -826,16 +833,28 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
             local_indices = np.linspace(0, n_local - 1, local_frames, dtype=int)
             frame_positions = sp_traj[local_indices].copy()
 
+            # Model assigned to this trajectory (needed for the trail tail offset)
+            assigned_scale = None
+            for m in (models or []):
+                if m.get('trajectory_index') == idx:
+                    assigned_scale = m.get('scale', model_scale)
+                    break
+
             # Progressive trail actor for this trajectory (downsampled path so
-            # rebuilding the tube each frame stays cheap).
+            # rebuilding the tube each frame stays cheap). It ends about half a
+            # model-length behind the model so it meets the tail, not the middle.
             if trail:
                 tr = sd['tube_radius']
                 n_t = min(len(sp_traj), 300)
                 tpts = sp_traj[np.linspace(0, len(sp_traj) - 1, n_t, dtype=int)]
+                total_len = np.linalg.norm(np.diff(tpts, axis=0), axis=1).sum()
+                back = (global_range * 0.05 * assigned_scale) * 0.45 \
+                    if assigned_scale is not None else global_range * 0.005
+                frac_off = (back / total_len) if total_len > 0 else 0.0
                 tube0 = pv.Spline(tpts[:2]).tube(radius=tr)
                 trail_actor = plotter.add_mesh(tube0, color=sd['color'],
                                                smooth_shading=True)
-                trails.append((trail_actor, tpts, n_t, tr))
+                trails.append((trail_actor, tpts, n_t, tr, frac_off))
             # See flypath3d(): moving actors need their z pre-scaled to ride the
             # vertically-exaggerated scene (set_scale doesn't move translations).
             if z_scale != 1.0:
@@ -929,8 +948,9 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
         
         def _grow_trails(f_idx):
             frac = f_idx / max(1, n_frames - 1)
-            for actor, tpts, n_t, tr in trails:
-                k = max(2, int(round(frac * (n_t - 1))) + 1)
+            for actor, tpts, n_t, tr, frac_off in trails:
+                fr = max(0.0, frac - frac_off)
+                k = max(2, int(round(fr * (n_t - 1))) + 1)
                 actor.mapper.dataset = pv.Spline(tpts[:k]).tube(radius=tr)
 
         if save_animation is not None:
