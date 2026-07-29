@@ -4,7 +4,6 @@ Supports CSV and MATLAB .mat files.
 """
 
 import numpy as np
-import pandas as pd
 from pathlib import Path
 from scipy.io import loadmat
 
@@ -45,6 +44,12 @@ def load_csv(filepath, x_col=None, y_col=None, z_col=None,
     if not filepath.exists():
         raise FileNotFoundError(f"CSV file not found: {filepath}")
     
+    # Imported here rather than at module scope: pandas is needed only for CSV
+    # input, and requiring it up front would keep the package out of any
+    # environment that just wants to render arrays — such as the simulation
+    # venv that drives the live view.
+    import pandas as pd
+
     df = pd.read_csv(filepath)
     
     # Auto-detect columns if not specified

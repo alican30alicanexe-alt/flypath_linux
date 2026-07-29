@@ -574,7 +574,8 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     xlim=None, ylim=None, zlim=None, z_scale=1.0,
                     yaw_sign=-1.0, pitch_sign=-1.0, roll_sign=1.0,
                     show_markers=False, trail=False,
-                    view=None, window_size=None, face='data'):
+                    view=None, window_size=None, face='data',
+                    grid_kwargs=None, zoom=None):
     """Plot multiple trajectories in the same 3D scene, optionally with 3D models.
 
     view : str or (azimuth, elevation), optional
@@ -582,6 +583,12 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
         'iso' (default). A tuple sets an explicit azimuth/elevation.
     window_size : (w, h), optional
         Render window size in pixels (e.g. (1000, 280) for a wide scene).
+    grid_kwargs : dict, optional
+        Extra keyword arguments merged into the `show_grid()` call, e.g.
+        {'xtitle': 'X (m)', 'n_xlabels': 7, 'fmt': '%.0f'}.
+    zoom : float, optional
+        Camera zoom applied after framing. Values below 1.0 pull back, leaving
+        room for the tick labels that sit outside the bounding box.
 
     models : list of dict, optional
         Each dict may also include:
@@ -742,12 +749,16 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
         })
     
     # Grid
-    if show_grid:
+    def _draw_grid():
         plotter.show_grid(
             show_xaxis=show_axes, show_yaxis=show_axes, show_zaxis=show_axes,
             grid=True, location='outer', bold=True, font_size=10,
             bounds=global_bounds,
+            **(grid_kwargs or {}),
         )
+
+    if show_grid:
+        _draw_grid()
 
     # Title
     if title:
@@ -784,6 +795,9 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
         )
         plotter.camera.view_up = (0, 0, 1)
     plotter.camera.clipping_range = (0.01, max_range * 10)
+
+    if zoom is not None:
+        plotter.camera.zoom(zoom)
 
     if show_axes:
         plotter.add_axes()
@@ -932,6 +946,13 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     frame_matrices[:, :3, :3] = rots
                     frame_matrices[:, :3, 3] = frame_positions
 
+                # Seat the model on its first frame straight away. The prepared
+                # mesh sits at the origin until a user_matrix moves it, so an
+                # actor left unplaced stretches the renderer's bounds all the
+                # way back to (0,0,0) — which the outer axes then fit to, giving
+                # an animation axes far larger than the data.
+                actor.user_matrix = frame_matrices[0]
+
                 frame_data.append({
                     'actor': actor,
                     'positions': frame_positions,
@@ -954,6 +975,15 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     'is_model': False,
                 })
         
+        # Model meshes are authored at the origin and only moved by user_matrix,
+        # so add_mesh() registers each one at (0,0,0) and the grid — created
+        # above, before any of these actors existed — unions that in, drawing
+        # axes that run all the way back to zero. Every actor is now seated on
+        # its first frame, so redrawing the grid here picks up the true extent.
+        if show_grid:
+            plotter.remove_bounds_axes()
+            _draw_grid()
+
         def _grow_trails(f_idx):
             frac = f_idx / max(1, n_frames - 1)
             for actor, tpts, n_t, tr, frac_off in trails:
