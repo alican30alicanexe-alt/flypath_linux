@@ -27,6 +27,12 @@ N_LABELS = 10
 
 
 def main():
+    if not EVAL_DIR.is_dir():
+        print(f'Export directory missing: {EVAL_DIR}\n'
+              f'Regenerate it with eval_v4.py, or point EVAL_DIR at another '
+              f'export. Skipping.')
+        return 0
+
     engagements = load_episode_dir(EVAL_DIR)
     print(f'{len(engagements)} episodes from {EVAL_DIR.name}\n')
 

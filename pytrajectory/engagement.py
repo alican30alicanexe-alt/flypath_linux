@@ -443,6 +443,47 @@ def animate_engagement(eng, out_path, window_size=(900, 900), view='iso',
     return out_path
 
 
+def _ticks_for_bounds(box, target_n=10):
+    """Label counts for a box whose bounds the caller fixed.
+
+    `_nice_box` is free to widen an axis until the ticks come out round. When
+    the bounds are given rather than derived they must be honoured exactly, so
+    instead of moving them this picks the finest round step that divides the
+    span evenly *and* aligns with its start.
+
+    A round step slightly denser than the label budget still beats an unround
+    one — limits of 0..5500 read far better in 500s than in 550s — so the cap
+    is relaxed before roundness is given up. Only when no round step divides
+    the span at all (0..4321) does it fall back to an even split.
+    """
+    spans = [box[1] - box[0], box[3] - box[2], box[5] - box[4]]
+    longest = max(max(spans), 1e-9)
+
+    ticks = []
+    for axis, span in enumerate(spans):
+        max_div = max(3, int(round(target_n * span / longest)))
+        start = box[2 * axis]
+
+        within, over = None, None
+        for step in _candidate_steps(max(span, 1e-9)):
+            n_div = span / step
+            if abs(n_div - round(n_div)) > 1e-9:      # step must divide span
+                continue
+            if abs(start / step - round(start / step)) > 1e-9:
+                continue                              # ...and align to its start
+            n_div = int(round(n_div))
+            if n_div < 1:
+                continue
+            if n_div <= max_div:
+                within = n_div if within is None else max(within, n_div)
+            elif n_div <= 2 * max_div:
+                over = n_div if over is None else min(over, n_div)
+
+        best = within if within is not None else over
+        ticks.append((best if best is not None else max_div) + 1)
+    return ticks
+
+
 def _grid_kwargs(ticks):
     """Axis styling shared by the static and animated paths.
 

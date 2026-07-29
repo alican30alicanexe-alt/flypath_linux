@@ -16,6 +16,9 @@ Uses **PyVista (VTK)** for high-quality, MATLAB-like 3D rendering with equal asp
 - **Top-down / side presets** — flat orthographic scene views
 - **Animation export** — save as GIF
 - **Standalone executable** — build with PyInstaller (no Python required)
+- **Engagement visualization** — load pursuer/evader runs from the 3DOF missile
+  simulation and render them as stills, GIFs, or a live in-process window; see
+  [ENGAGEMENT.md](ENGAGEMENT.md)
 
 ## Installation
 

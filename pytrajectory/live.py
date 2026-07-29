@@ -30,7 +30,8 @@ import numpy as np
 
 from .engagement import (
     MODEL_DIR, MODEL_SIZE_FRACTION, TARGET_COLOR, TARGET_MODEL,
-    _grid_kwargs, _nice_box, color_for_label, wide_missile_path,
+    _grid_kwargs, _nice_box, _ticks_for_bounds, color_for_label,
+    wide_missile_path,
 )
 
 # Trail vertices kept for display. The tube is rebuilt from these on every
@@ -70,13 +71,18 @@ class LiveEngagementView:
         wall-clock speed instead of as fast as it can compute.
     bounds : (lo, hi), optional
         Known scene extent as two length-3 sequences. Supplying it keeps the
-        axes fixed for the whole run; without it they grow to fit.
+        axes fixed for the whole run; without it they grow to fit, which does
+        mean the grid re-lays out once or twice early on.
+    snap_bounds : bool, default True
+        Whether `bounds` may be widened to land on round ticks. True suits an
+        extent measured from data; False honours hand-picked limits exactly.
     """
 
     def __init__(self, tracks, *, window_size=(900, 900), off_screen=False,
                  line_width=400, model_scale=1.0, n_labels=10, zoom=0.85,
-                 title=None, bounds=None, show_models=True, show_hud=True,
-                 render_every=1, realtime=False, trail_points=TRAIL_POINTS):
+                 title=None, bounds=None, snap_bounds=True, show_models=True,
+                 show_hud=True, render_every=1, realtime=False,
+                 trail_points=TRAIL_POINTS):
         if not tracks:
             raise ValueError('at least one track is required')
 
@@ -108,6 +114,8 @@ class LiveEngagementView:
         self._model_actors = {}
         self._box = None
         self._pin_actor = None
+        self._hud_actor = None
+        self._title_actor = None
         self._base_view_angle = None
         self._pushes = 0
         self._wall_start = None
@@ -115,10 +123,15 @@ class LiveEngagementView:
         self._status = None
         self.plotter = None
 
+        self.snap_bounds = snap_bounds
         self._fixed_bounds = None
         if bounds is not None:
             lo, hi = bounds
-            self._fixed_bounds = (np.asarray(lo, float), np.asarray(hi, float))
+            lo, hi = np.asarray(lo, float), np.asarray(hi, float)
+            if np.any(hi <= lo):
+                raise ValueError(f'bounds must increase on every axis, '
+                                 f'got lo={lo.tolist()} hi={hi.tolist()}')
+            self._fixed_bounds = (lo, hi)
 
     # -- lifecycle ---------------------------------------------------------
 
@@ -129,19 +142,28 @@ class LiveEngagementView:
         self.plotter = pv.Plotter(off_screen=self.off_screen,
                                   window_size=self.window_size)
         self.plotter.set_background('white')
-        self._base_view_angle = self.plotter.camera.view_angle
 
         if self.title:
-            self.plotter.add_text(self.title, position='upper_edge',
-                                  font_size=14, color='black', name='title')
-
-        if self._fixed_bounds is not None:
-            self._apply_box(*self._fixed_bounds)
-
+            self._title_actor = self.plotter.add_text(
+                self.title, position='upper_edge', font_size=14,
+                color='black', name='title', render=False)
         self.plotter.add_axes()
+        self._base_view_angle = self.plotter.camera.view_angle
+
+        # The whole scene is built before the window is mapped, with every add
+        # passing render=False. show() maps the window and paints once, and it
+        # leaves the camera alone, so that single first paint is already the
+        # finished grid under its final framing — no empty frame, and no grid
+        # drawn at a size it is about to change from.
+        if self._fixed_bounds is not None:
+            if self.snap_bounds:
+                self._apply_box(*self._fixed_bounds)
+            else:
+                self._apply_exact_box(*self._fixed_bounds)
+
         if not self.off_screen:
-            # Non-blocking: opens the window and returns, so the caller keeps
-            # control of the simulation loop and drives the frames itself.
+            # Non-blocking: returns immediately, so the caller keeps control of
+            # the simulation loop and drives the frames itself.
             self.plotter.show(interactive_update=True, auto_close=False)
         return self
 
@@ -219,9 +241,14 @@ class LiveEngagementView:
     def set_title(self, text):
         """Replace the headline — the outcome is only known once a run ends."""
         self.title = text
-        if self.plotter is not None:
-            self.plotter.add_text(text, position='upper_edge', font_size=14,
-                                  color='black', name='title')
+        if self.plotter is None:
+            return
+        if self._title_actor is None:
+            self._title_actor = self.plotter.add_text(
+                text, position='upper_edge', font_size=14, color='black',
+                name='title', render=False)
+        else:
+            self._title_actor.set_text('upper_edge', text)
 
     def capture(self):
         """Current frame as an RGB array, for assembling a recording."""
@@ -271,9 +298,18 @@ class LiveEngagementView:
         self._apply_box(lo, hi)
 
     def _apply_box(self, lo, hi):
+        """Fit a rounded box around an extent and install it."""
+        box, ticks = _nice_box(lo, hi, self.n_labels)
+        self._set_box(box, ticks)
+
+    def _apply_exact_box(self, lo, hi):
+        """Install caller-supplied bounds verbatim, without widening them."""
+        box = [lo[0], hi[0], lo[1], hi[1], lo[2], hi[2]]
+        self._set_box(box, _ticks_for_bounds(box, self.n_labels))
+
+    def _set_box(self, box, ticks):
         import pyvista as pv
 
-        box, ticks = _nice_box(lo, hi, self.n_labels)
         self._box = box
 
         # VTK re-fits the cube axes to the renderer's bounds on every render
@@ -288,7 +324,9 @@ class LiveEngagementView:
                            dtype=float)
         if self._pin_actor is None:
             self._pin_actor = self.plotter.add_mesh(pv.PolyData(corners),
-                                                    opacity=0.0)
+                                                    opacity=0.0,
+                                                    reset_camera=False,
+                                                    render=False)
         else:
             self._pin_actor.mapper.dataset = pv.PolyData(corners)
 
@@ -296,8 +334,25 @@ class LiveEngagementView:
         # redraw that keeps the recorded animation's axes honest.
         self.plotter.remove_bounds_axes()
         self.plotter.show_grid(bounds=list(box), grid=True, location='outer',
-                               bold=True, font_size=10, **_grid_kwargs(ticks))
+                               bold=True, font_size=10, render=False,
+                               **_grid_kwargs(ticks))
 
+        # The axes actor's own extent includes the tick marks and labels drawn
+        # just outside the box. Left in the bounds it enlarges them, VTK re-fits
+        # the axes to that, and the overhang grows again on the next render —
+        # ticks visibly creep off their round values over a long run. Excluding
+        # it leaves the pinned corners as the only thing setting the extent.
+        axes_actor = self.plotter.renderer.cube_axes_actor
+        if axes_actor is not None:
+            _no_bounds(axes_actor)
+
+        self._frame_camera()
+
+    def _frame_camera(self):
+        """Point the camera at the current box, isometric and true 1:1:1."""
+        box = self._box
+        if box is None or self.plotter is None:
+            return
         centre = np.array([(box[0] + box[1]) / 2, (box[2] + box[3]) / 2,
                            (box[4] + box[5]) / 2])
         span = self._scale()
@@ -305,9 +360,9 @@ class LiveEngagementView:
         self.plotter.camera.position = centre + span * 1.5
         self.plotter.camera.view_up = (0, 0, 1)
         self.plotter.camera.clipping_range = (0.01, span * 10)
-        # zoom() is cumulative on the camera, and the box is re-fitted several
-        # times over a run, so the angle is restored first — otherwise every
-        # re-fit multiplies the zoom again and the scene shrinks away.
+        # zoom() is cumulative on the camera, and the box may be re-fitted
+        # several times over a run, so the angle is restored first — otherwise
+        # every re-fit multiplies the zoom again and the scene shrinks away.
         self.plotter.camera.view_angle = self._base_view_angle
         self.plotter.camera.zoom(self.zoom)
 
@@ -327,7 +382,8 @@ class LiveEngagementView:
         actor = self._trail_actors.get(label)
         if actor is None:
             actor = self.plotter.add_mesh(mesh, color=track['color'],
-                                          smooth_shading=True)
+                                          smooth_shading=True,
+                                          reset_camera=False, render=False)
             _no_bounds(actor)
             self._trail_actors[label] = actor
         else:
@@ -345,7 +401,8 @@ class LiveEngagementView:
                 return
             size = self._scale() * MODEL_SIZE_FRACTION * self.model_scale
             mesh = _prepare_model_mesh(str(path), size)
-            actor = self.plotter.add_mesh(mesh, color=track['color'])
+            actor = self.plotter.add_mesh(mesh, color=track['color'],
+                                          reset_camera=False, render=False)
             _no_bounds(actor)
             self._model_actors[label] = actor
 
@@ -370,9 +427,20 @@ class LiveEngagementView:
                     lines.append(f'{track["label"]:<6s} R = {r:9.1f} m')
         if self._status:
             lines.append(self._status)
+        text = '\n'.join(lines)
 
-        self.plotter.add_text('\n'.join(lines), position='lower_left',
-                              font_size=10, color='black', name='hud')
+        # add_text() goes through add_actor(), and pyvista's add_actor forces a
+        # full render_window.Render() on the spot. Re-adding the HUD every frame
+        # therefore doubled the renders and made the whole scene — grid included
+        # — visibly flicker under software GL. The actor is created once and its
+        # string is swapped in place after that; the caller's own render at the
+        # end of refresh() is what puts it on screen.
+        if self._hud_actor is None:
+            self._hud_actor = self.plotter.add_text(
+                text, position='lower_left', font_size=10, color='black',
+                name='hud', render=False)
+        else:
+            self._hud_actor.set_text('lower_left', text)
 
     def _pace(self, t):
         """Sleep so playback tracks simulation time."""
