@@ -131,6 +131,36 @@ def _nice_bounds(lo, hi, target_n=10):
     return box, ticks
 
 
+def _decimals_for(value, limit=6):
+    """Fewest decimal places that write `value` exactly, or `limit` if none do."""
+    for d in range(limit + 1):
+        if abs(round(value, d) - value) < 1e-9:
+            return d
+    return limit
+
+
+def _cleanest_split(span, start, ideal, max_div):
+    """Division count for a span no round step divides, e.g. a pinned 0..6001.
+
+    Nothing here can be round — with labels spread evenly from one given limit
+    to the other, a span with no round divisor has no round step either — so the
+    goal drops to the next best thing: the shortest labels. Splitting 0..4001
+    into the ideal seven gives 571.571..., which needs three decimals and drags
+    every other axis to three with it, since the axes share one label format.
+    Five parts give an exact 800.2 instead.
+
+    Prefers the fewest decimals, then the count closest to the ideal density.
+    """
+    best = None
+    for n_div in range(2, max(3, int(round(2 * max_div))) + 1):
+        step = span / n_div
+        decimals = max(_decimals_for(step), _decimals_for(start))
+        key = (decimals, abs(n_div - ideal))
+        if best is None or key < best[0]:
+            best = (key, n_div)
+    return best[1]
+
+
 def _ticks_for_bounds(box, target_n=10):
     """Label counts for a box whose bounds the caller fixed.
 
@@ -183,7 +213,9 @@ def _ticks_for_bounds(box, target_n=10):
                 best = (key, n_div)
 
         n_div = best[1] if best is not None else lone
-        ticks.append((n_div if n_div is not None else max_div) + 1)
+        if n_div is None:
+            n_div = _cleanest_split(span, start, ideal, max_div)
+        ticks.append(n_div + 1)
     return ticks
 
 
