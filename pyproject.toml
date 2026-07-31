@@ -24,7 +24,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/pytrajectory"
+Homepage = "https://github.com/alican30alicanexe-alt/flypath_linux"
 
 [project.scripts]
 pytrajectory = "pytrajectory.cli:main"

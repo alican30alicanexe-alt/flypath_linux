@@ -124,8 +124,8 @@ pytrajectory examples/trajectory_aircraft.mat --animate --model models/f-16.mat 
 ### Display options
 
 ```bash
-# Line width uses a fine scale: default (15) is a thin line, and 100 ~= the
-# classic thickness. Use small values for hairlines:
+# Line width uses a fine scale: default (50) is a moderate line, and 100 ~=
+# the classic thickness. Use small values for hairlines:
 pytrajectory trajectory.csv --line-width 100
 pytrajectory trajectory.csv --line-width 5
 
@@ -245,24 +245,51 @@ flypath3d_multi(
 )
 ```
 
-## Building Standalone Executable
+## Standalone Executable (no Python required)
+
+### Download a prebuilt binary
+
+Linux and Windows builds are published on the
+[Releases page](https://github.com/alican30alicanexe-alt/flypath_linux/releases) —
+download, extract, and run. No Python, no `pip install`. See the release notes
+there for platform-specific quick-start commands.
+
+### Or build it yourself
+
+Linux/macOS:
 
 ```bash
-# Install PyInstaller
 pip install pyinstaller pyinstaller-hooks-contrib
 
-# Build
 chmod +x build.sh
 ./build.sh
 
-# Or manually:
-pyinstaller pytrajectory.spec --clean
-
-# Run the binary
+# Run it
 ./dist/pytrajectory/pytrajectory --demo spiral
 ```
 
-The standalone binary includes all models and example data, and runs on any Linux system without Python installed.
+Windows (PowerShell):
+
+```powershell
+pip install -e .
+pip install pyinstaller pyinstaller-hooks-contrib
+
+pyinstaller pytrajectory.spec --clean
+Copy-Item -Recurse models dist\pytrajectory\models
+Copy-Item -Recurse examples dist\pytrajectory\examples
+
+# Run it
+.\dist\pytrajectory\pytrajectory.exe --demo spiral
+```
+
+Either way, `dist/pytrajectory/` (or `dist\pytrajectory\` on Windows) ends up
+self-contained: the executable, the Python/PyVista/VTK runtime, and the
+`models/`/`examples/` folders all sit side by side, so the whole folder can be
+zipped and moved to another machine without Python installed. `pytrajectory.spec`
+does *not* bundle `models/`/`examples/` itself — `build.sh` (and the
+[`build-windows`](.github/workflows/build-windows.yml) CI workflow) copy them
+in as a separate step after PyInstaller runs, since PyInstaller's own
+data-bundling puts them somewhere the executable can't find by relative path.
 
 ## Data Format
 
