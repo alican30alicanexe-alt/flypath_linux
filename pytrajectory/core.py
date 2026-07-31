@@ -9,6 +9,209 @@ from pathlib import Path
 from .io import load_trajectory, load_3d_model
 
 
+STEP_MANTISSAS = (1.0, 2.0, 2.5, 5.0)
+
+
+def _candidate_steps(span):
+    """Round tick intervals worth considering for an axis of `span`, ascending.
+
+    Restricted to 1, 2, 2.5 and 5 times a power of ten so ticks read as 2000 /
+    2500 / 3000 rather than the raw data extent divided into equal parts.
+    """
+    if span <= 0:
+        return [1.0]
+    top = int(np.floor(np.log10(span)))
+    return sorted(m * 10.0 ** e
+                  for e in range(top - 2, top + 2)
+                  for m in STEP_MANTISSAS)
+
+
+def _fit_axis(lo, hi, max_div, flat_step=None):
+    """Snap one axis outward to round ticks, using the least padding possible.
+
+    Picks the step that snaps the axis tightest without exceeding `max_div`
+    divisions — a finer step can only tighten the snapped bounds, so minimising
+    the padding is what chooses between round options, while `max_div` stops a
+    short axis from collecting more grid lines than it has room to label.
+
+    Returns (lo, hi, n_labels); the interval only ever grows, so no sample is
+    ever cropped.
+    """
+    span = float(hi) - float(lo)
+
+    if span <= 0:
+        # A flat axis (constant altitude, a planar path) has no extent to snap
+        # to, so it borrows the scene's step and pads symmetrically: a track
+        # sitting at z=0 in a scene gridded in 500s spans -500..500 rather than
+        # collapsing to a zero-thickness box.
+        step = float(flat_step) if flat_step else 1.0
+        a = np.floor((float(lo) - step) / step) * step
+        b = np.ceil((float(hi) + step) / step) * step
+        return float(a), float(b), int(round((b - a) / step)) + 1
+
+    # A single division draws no interior grid line, which reads as a bare box
+    # rather than a grid, so a step that splits the axis at least twice wins
+    # even when a coarser one would hug the data slightly tighter. `lone` keeps
+    # the one-division fit in reserve for axes too short to afford anything else.
+    best = lone = None
+    for step in _candidate_steps(span):
+        a = np.floor(lo / step) * step
+        b = np.ceil(hi / step) * step
+        if b - a < step / 2:
+            b = a + step
+        n_div = int(round((b - a) / step))
+        if n_div < 1 or n_div > max_div:
+            continue
+        fit = (float(a), float(b), n_div + 1)
+        if n_div == 1:
+            if lone is None or (b - a) < (lone[1] - lone[0]):
+                lone = fit
+        elif best is None or (b - a) < (best[1] - best[0]):
+            best = fit
+    if best is None:
+        best = lone
+    if best is None:
+        # Every candidate overshot max_div: fall back to the coarsest.
+        step = _candidate_steps(span)[-1]
+        a = float(np.floor(lo / step) * step)
+        b = float(np.ceil(hi / step) * step)
+        best = (a, max(b, a + step), 2)
+    return best
+
+
+def _nice_bounds(lo, hi, target_n=10):
+    """Expand a data extent outward until every axis ends on a round tick.
+
+    Returns (box, ticks) where box is [xmin, xmax, ymin, ymax, zmin, zmax] and
+    ticks is the per-axis label count that lands exactly on the round steps.
+
+    The box only ever grows, so no sample is cropped, and each axis is snapped
+    independently — the 1:1:1 aspect is untouched because nothing is rescaled,
+    the drawn bounds just move out to the next round number.
+
+    Label density is shared out in proportion to each axis's span. Under a true
+    1:1:1 aspect a short axis is physically short on screen, so giving every
+    axis the same tick count crowds the short one into overlapping text.
+    """
+    lo = np.asarray(lo, dtype=float)
+    hi = np.asarray(hi, dtype=float)
+    spans = hi - lo
+    longest = float(spans.max())
+
+    if longest <= 0:
+        # Every axis is a single point, so the data sets no scale at all; the
+        # magnitude of the coordinates is the only hint left.
+        longest = max(float(np.abs(np.concatenate([lo, hi])).max()), 1.0)
+
+    # Fit the widest axis first: the step it settles on is what any flat axis
+    # borrows, which keeps one grid spacing across the whole scene.
+    fitted, flat_step = {}, None
+    for axis in sorted(range(3), key=lambda a: -spans[a]):
+        max_div = max(3, int(round(target_n * float(spans[axis]) / longest)))
+        a, b, n_labels = _fit_axis(float(lo[axis]), float(hi[axis]),
+                                   max_div, flat_step)
+        fitted[axis] = (a, b, n_labels)
+        if flat_step is None and n_labels > 1:
+            flat_step = (b - a) / (n_labels - 1)
+
+    box, ticks = [], []
+    for axis in range(3):
+        a, b, n_labels = fitted[axis]
+        box.extend([a, b])
+        ticks.append(n_labels)
+    return box, ticks
+
+
+def _ticks_for_bounds(box, target_n=10):
+    """Label counts for a box whose bounds the caller fixed.
+
+    `_nice_bounds` is free to widen an axis until the ticks come out round. When
+    the bounds are given rather than derived they must be honoured exactly, so
+    instead of moving them this picks the finest round step that divides the
+    span evenly *and* aligns with its start.
+
+    A round step slightly denser than the label budget still beats an unround
+    one — limits of 0..5500 read far better in 500s than in 550s — so the cap
+    is relaxed before roundness is given up. Only when no round step divides
+    the span at all (0..4321) does it fall back to an even split.
+    """
+    spans = [box[1] - box[0], box[3] - box[2], box[5] - box[4]]
+    longest = max(max(spans), 1e-9)
+
+    ticks = []
+    for axis, span in enumerate(spans):
+        max_div = max(3, int(round(target_n * span / longest)))
+        start = box[2 * axis]
+
+        within, over = None, None
+        for step in _candidate_steps(max(span, 1e-9)):
+            n_div = span / step
+            if abs(n_div - round(n_div)) > 1e-9:      # step must divide span
+                continue
+            if abs(start / step - round(start / step)) > 1e-9:
+                continue                              # ...and align to its start
+            n_div = int(round(n_div))
+            if n_div < 1:
+                continue
+            if n_div <= max_div:
+                within = n_div if within is None else max(within, n_div)
+            elif n_div <= 2 * max_div:
+                over = n_div if over is None else min(over, n_div)
+
+        best = within if within is not None else over
+        ticks.append((best if best is not None else max_div) + 1)
+    return ticks
+
+
+def _label_fmt(box, ticks):
+    """Tick label format showing just enough decimals for the steps in use.
+
+    Round bounds deserve round labels: a grid stepping in 500s should read
+    "2500", not "2500.0". Sub-unit steps still need their decimals, so the
+    precision is the coarsest that reproduces every tick exactly.
+
+    VTK 9.6 switched cube-axes labels from printf to str.format templates, so
+    the same precision has to be spelled differently either side of that line.
+    """
+    decimals = 0
+    for axis in range(3):
+        lo, hi = box[2 * axis], box[2 * axis + 1]
+        n_div = max(1, ticks[axis] - 1)
+        step = (hi - lo) / n_div
+        for d in range(7):
+            if abs(round(step, d) - step) < 1e-9 and abs(round(lo, d) - lo) < 1e-9:
+                decimals = max(decimals, d)
+                break
+        else:
+            decimals = max(decimals, 3)
+
+    if pv.vtk_version_info < (9, 6, 0):
+        return f'%.{decimals}f'
+    return f'{{0:.{decimals}f}}'
+
+
+def _axis_layout(data_min, data_max, xlim, ylim, zlim, target_n=10):
+    """Final axis box and matching label counts/format for a scene.
+
+    Axes the caller pinned via xlim/ylim/zlim are used exactly as given — an
+    explicit limit is never widened, even to reach a round number. Every other
+    axis is snapped outward onto round ticks.
+    """
+    lims = [xlim, ylim, zlim]
+    box, ticks = _nice_bounds(data_min, data_max, target_n)
+
+    if any(lim is not None for lim in lims):
+        for axis, lim in enumerate(lims):
+            if lim is not None:
+                box[2 * axis] = float(lim[0])
+                box[2 * axis + 1] = float(lim[1])
+        # The snapped axes are already round, so deriving every count from the
+        # final box keeps one consistent rule rather than mixing two.
+        ticks = _ticks_for_bounds(box, target_n)
+
+    return box, ticks, _label_fmt(box, ticks)
+
+
 def _make_spline(points, max_ctrl=1000, max_interp=6000):
     """Build a smooth spline through the path.
 
@@ -345,45 +548,28 @@ def flypath3d(data, line_width=50, color=None, colormap=None,
         plotter.add_mesh(pv.Sphere(radius=marker_radius, center=points[-1]),
                          color='red', smooth_shading=True)
     
-    # Compute tight bounds with 10% padding (or use manual limits if provided)
+    # Axis limits snap outward onto round numbers, so the grid reads in 250s /
+    # 500s / 1000s instead of wherever a percentage pad happened to land. An
+    # explicit xlim/ylim/zlim is still used exactly as given.
     data_min = points.min(axis=0)
     data_max = points.max(axis=0)
-    data_range_axes = data_max - data_min
-    
-    if xlim is not None:
-        x_min, x_max = xlim
-    else:
-        x_padding = data_range_axes[0] * 0.1
-        x_padding = max(x_padding, data_range * 0.01)
-        x_min = data_min[0] - x_padding
-        x_max = data_max[0] + x_padding
-    
-    if ylim is not None:
-        y_min, y_max = ylim
-    else:
-        y_padding = data_range_axes[1] * 0.1
-        y_padding = max(y_padding, data_range * 0.01)
-        y_min = data_min[1] - y_padding
-        y_max = data_max[1] + y_padding
-    
-    if zlim is not None:
-        z_min, z_max = zlim
-    else:
-        z_padding = data_range_axes[2] * 0.1
-        z_padding = max(z_padding, data_range * 0.01)
-        z_min = data_min[2] - z_padding
-        z_max = data_max[2] + z_padding
-    
-    bounds = [x_min, x_max, y_min, y_max, z_min, z_max]
-    
+
+    bounds, n_labels, fmt = _axis_layout(data_min, data_max, xlim, ylim, zlim)
+    x_min, x_max, y_min, y_max, z_min, z_max = bounds
+
     # MATLAB-style boxed axes with grid and tight bounds
-    if show_grid:
+    def _draw_grid():
         plotter.show_grid(
             show_xaxis=show_axes, show_yaxis=show_axes, show_zaxis=show_axes,
             grid=True, location='outer', bold=True, font_size=10,
             bounds=bounds,
+            n_xlabels=n_labels[0], n_ylabels=n_labels[1], n_zlabels=n_labels[2],
+            fmt=fmt,
         )
-    
+
+    if show_grid:
+        _draw_grid()
+
     # Set title
     if title:
         plotter.add_text(title, position='upper_edge', font_size=14,
@@ -463,7 +649,16 @@ def flypath3d(data, line_width=50, color=None, colormap=None,
                 sphere_mesh, color='yellow', smooth_shading=True,
                 specular=0.5, specular_power=20
             )
-        
+
+        # The model mesh is authored at the origin and only moved by
+        # user_matrix, so adding it makes the cube axes recompute their extent
+        # and stretch the box back to zero — discarding the bounds show_grid()
+        # was given, round tick values included. Redrawing with the actors in
+        # place re-pins the box.
+        if show_grid:
+            plotter.remove_bounds_axes()
+            _draw_grid()
+
         # Pre-compute all frame positions. Animated actors are positioned via
         # a user_matrix translation, which VTK does NOT scale with set_scale
         # (unlike baked-vertex meshes such as the tube/markers). So when the
@@ -655,24 +850,11 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
     global_max = np.max([np.max(p, axis=0) for p in all_points], axis=0)
     global_range = np.max(global_max - global_min)
 
-    # Compute bounds with 10% padding (or use manual limits if provided)
-    global_range_axes = global_max - global_min
-    if xlim is not None:
-        gx_min, gx_max = xlim
-    else:
-        pad = max(global_range_axes[0] * 0.1, global_range * 0.01)
-        gx_min, gx_max = global_min[0] - pad, global_max[0] + pad
-    if ylim is not None:
-        gy_min, gy_max = ylim
-    else:
-        pad = max(global_range_axes[1] * 0.1, global_range * 0.01)
-        gy_min, gy_max = global_min[1] - pad, global_max[1] + pad
-    if zlim is not None:
-        gz_min, gz_max = zlim
-    else:
-        pad = max(global_range_axes[2] * 0.1, global_range * 0.01)
-        gz_min, gz_max = global_min[2] - pad, global_max[2] + pad
-    global_bounds = [gx_min, gx_max, gy_min, gy_max, gz_min, gz_max]
+    # Axis limits snap outward onto round numbers (see flypath3d); an explicit
+    # xlim/ylim/zlim is still used exactly as given.
+    global_bounds, n_labels, fmt = _axis_layout(global_min, global_max,
+                                                xlim, ylim, zlim)
+    gx_min, gx_max, gy_min, gy_max, gz_min, gz_max = global_bounds
 
     # Create plotter
     is_save = save_animation is not None
@@ -764,6 +946,8 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
             show_xaxis=show_axes, show_yaxis=show_axes, show_zaxis=show_axes,
             grid=True, location='outer', bold=True, font_size=10,
             bounds=global_bounds,
+            n_xlabels=n_labels[0], n_ylabels=n_labels[1], n_zlabels=n_labels[2],
+            fmt=fmt,
             **(grid_kwargs or {}),
         )
 
@@ -845,6 +1029,15 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
             for k in range(count):
                 actor = plotter.add_mesh(base_mesh.copy(), color=color)
                 actor.user_matrix = mats[k]
+
+        # Adding an actor makes the cube axes recompute their extent from the
+        # renderer, which silently discards the bounds show_grid() was given —
+        # the box then stretches to wherever the model meshes reach and the
+        # round tick values are lost with it. Redrawing now, with every actor
+        # already in place, re-pins the box and it stays put from here on.
+        if show_grid:
+            plotter.remove_bounds_axes()
+            _draw_grid()
 
     # --- Animation support ---
     if animate or save_animation is not None:

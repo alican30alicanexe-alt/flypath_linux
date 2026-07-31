@@ -65,7 +65,10 @@ What each part does:
   auto-fitting to the data.
 
 Drop `--xlim`/`--zlim` and the box auto-fits to the data instead — a bigger,
-uncropped view, handy when you don't already know the scene's extent:
+uncropped view, handy when you don't already know the scene's extent. An
+auto-fitted axis is snapped *outward* onto round numbers, so a track spanning
+-323..2734 is drawn as -500..3000 and gridded in 500s rather than at whatever
+values a percentage pad landed on:
 
 ```bash
 # pip install: "pytrajectory". Standalone build: "./pytrajectory".
@@ -142,9 +145,29 @@ pytrajectory trajectory.csv --markers
 # Tick labels keep real values; only the geometry is stretched:
 pytrajectory trajectory.csv --z-scale 8
 
-# Manual axis limits (also reframe the camera, not just the grid box):
+# Manual axis limits (also reframe the camera, not just the grid box).
+# Given limits are used exactly as typed — never widened to reach a round
+# number — while any axis you leave out still snaps to one on its own:
 pytrajectory trajectory.csv --xlim -500 500 --ylim -500 3500 --zlim 500 1500
 ```
+
+### Axis limits and grid steps
+
+Axes you don't pin are fitted automatically, and the fit always lands on round
+numbers — ticks step in 1s, 2s, 2.5s or 5s times a power of ten (250 / 500 /
+1000 …), never on the raw data extent divided into equal parts. The box only
+ever grows, so no sample is ever cropped, and each axis is snapped on its own,
+which leaves the true 1:1:1 aspect untouched.
+
+Two details worth knowing:
+
+- **Label density follows axis length.** Under a real 1:1:1 aspect a short axis
+  is short on screen, so it is given proportionally fewer ticks — otherwise its
+  labels overlap into an unreadable smear.
+- **A flat axis still gets a box.** A path at constant altitude has no extent to
+  snap to, so it borrows the scene's grid step and pads symmetrically: a track
+  sitting at z=0 in a scene gridded in 500s spans -500..500 instead of
+  collapsing to a zero-thickness slab.
 
 ### Orientation / angle conventions
 
