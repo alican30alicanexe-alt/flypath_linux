@@ -252,10 +252,6 @@ def main():
         help='Input angles are in radians (convert to degrees)'
     )
     parser.add_argument(
-        '--order', default='pyr',
-        help='Column order for orientation: "pyr"=pitch(3)/yaw(4)/roll(5) (default)'
-    )
-    parser.add_argument(
         '--speed', type=float, default=3.0,
         help='Animation duration in seconds (default: 3.0)'
     )
@@ -431,7 +427,6 @@ def main():
             yaw_col=args.yaw_col,
             roll_col=args.roll_col,
             radians=args.rad,
-            order=args.order,
             speed=args.speed,
             model_scale=model_scale,
             xlim=args.xlim,

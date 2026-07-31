@@ -436,7 +436,7 @@ def flypath3d(data, line_width=50, color=None, colormap=None,
               background='white', off_screen=False, return_plotter=False,
               animate=False, save_animation=None,
               model=None, pitch_col=3, yaw_col=4, roll_col=5,
-              radians=False, order='pyr', speed=3.0, model_scale=1.0,
+              radians=False, speed=3.0, model_scale=1.0,
               xlim=None, ylim=None, zlim=None, z_scale=1.0,
               yaw_sign=-1.0, pitch_sign=-1.0, roll_sign=1.0,
               show_markers=False, trail=False, face='data'):
@@ -490,12 +490,9 @@ def flypath3d(data, line_width=50, color=None, colormap=None,
     radians : bool, default False
         If True, input angles are in radians and will be converted to degrees.
         If False (default), angles are assumed to be in degrees already.
-    order : str, default 'pyr'
-        Column order for orientation data: 'pyr' = pitch(3), yaw(4), roll(5).
-        Other options: 'ypr', 'rpy', etc.
     speed : float, default 3.0
         Animation duration in seconds.
-    
+
     Returns
     -------
     pyvista.Plotter or None
@@ -794,7 +791,7 @@ def flypath3d(data, line_width=50, color=None, colormap=None,
 def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                     title=None, background='white', off_screen=False,
                     return_plotter=False, animate=False, save_animation=None,
-                    radians=False, order='pyr', speed=3.0, model_scale=1.0,
+                    radians=False, speed=3.0, model_scale=1.0,
                     xlim=None, ylim=None, zlim=None, z_scale=1.0,
                     yaw_sign=-1.0, pitch_sign=-1.0, roll_sign=1.0,
                     show_markers=False, trail=False,
@@ -845,8 +842,6 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
     save_animation : str, optional
     radians : bool, default False
         If True, input angles are in radians. Default is degrees.
-    order : str, default 'pyr'
-        Column order for orientation data.
     speed : float, default 3.0
         Animation duration in seconds.
     
