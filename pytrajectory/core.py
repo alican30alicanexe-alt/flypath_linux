@@ -139,20 +139,31 @@ def _ticks_for_bounds(box, target_n=10):
     instead of moving them this picks the finest round step that divides the
     span evenly *and* aligns with its start.
 
-    A round step slightly denser than the label budget still beats an unround
-    one — limits of 0..5500 read far better in 500s than in 550s — so the cap
-    is relaxed before roundness is given up. Only when no round step divides
-    the span at all (0..4321) does it fall back to an even split.
+    Which round step to take is decided by how close its division count lands
+    to the density the axis's length asks for, allowing a modest overshoot.
+    Capping hard at that density instead would sometimes force a far coarser
+    step than the axis deserves: on a short axis pinned to 0..4000 the only
+    round step fitting three divisions is 2000, so the whole axis collapsed to
+    0 / 2000 / 4000 while a 0..4500 axis beside it — which no round step
+    divides, so it fell through to an even split — read 0 / 1500 / 3000 / 4500.
+    Scoring against the ideal takes the 1000 step there, and still leaves a
+    genuinely tiny axis coarse, since its ideal is a fraction of a division.
+
+    Only when no round step divides the span at all (0..4321) does it fall back
+    to an even split.
     """
     spans = [box[1] - box[0], box[3] - box[2], box[5] - box[4]]
     longest = max(max(spans), 1e-9)
 
     ticks = []
     for axis, span in enumerate(spans):
-        max_div = max(3, int(round(target_n * span / longest)))
+        ideal = target_n * span / longest
+        max_div = max(3, int(round(ideal)))
         start = box[2 * axis]
 
-        within, over = None, None
+        # `lone` holds a one-division fit in reserve: it draws no interior grid
+        # line, so it is only used when nothing else divides the span.
+        best = lone = None
         for step in _candidate_steps(max(span, 1e-9)):
             n_div = span / step
             if abs(n_div - round(n_div)) > 1e-9:      # step must divide span
@@ -160,15 +171,19 @@ def _ticks_for_bounds(box, target_n=10):
             if abs(start / step - round(start / step)) > 1e-9:
                 continue                              # ...and align to its start
             n_div = int(round(n_div))
-            if n_div < 1:
+            if n_div < 1 or n_div > 2 * max_div:
                 continue
-            if n_div <= max_div:
-                within = n_div if within is None else max(within, n_div)
-            elif n_div <= 2 * max_div:
-                over = n_div if over is None else min(over, n_div)
+            if n_div == 1:
+                lone = 1
+                continue
+            # Closest to the ideal density wins; a tie goes to the denser step,
+            # one extra line costing less than half the labels.
+            key = (abs(n_div - ideal), -n_div)
+            if best is None or key < best[0]:
+                best = (key, n_div)
 
-        best = within if within is not None else over
-        ticks.append((best if best is not None else max_div) + 1)
+        n_div = best[1] if best is not None else lone
+        ticks.append((n_div if n_div is not None else max_div) + 1)
     return ticks
 
 
