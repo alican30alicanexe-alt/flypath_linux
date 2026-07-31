@@ -153,6 +153,12 @@ pytrajectory trajectory.csv --xlim -500 500 --ylim -500 3500 --zlim 500 1500
 
 ### Axis limits and grid steps
 
+> **Known issue:** an axis pinned with `--xlim`/`--ylim`/`--zlim` can be
+> labelled with only the first part of its range — `--ylim 0 4000` reading
+> `0 … 2000` — because PyVista chooses the label values while VTK independently
+> chooses the tick positions. See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for the
+> cause, which limits are safe, and the fix plan.
+
 Axes you don't pin are fitted automatically, and the fit always lands on round
 numbers — ticks step in 1s, 2s, 2.5s or 5s times a power of ten (250 / 500 /
 1000 …), never on the raw data extent divided into equal parts. The box only
