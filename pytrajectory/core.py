@@ -3,7 +3,6 @@ Core plotting functions for pytrajectory.
 MATLAB-like 3D trajectory visualization using PyVista.
 """
 
-import time
 import numpy as np
 import pyvista as pv
 from pathlib import Path
@@ -540,13 +539,8 @@ def flypath3d(data, line_width=50, color=None, colormap=None,
                 frames.append(img)
             imageio.mimsave(save_animation, frames, fps=30, loop=0)
             print(f"Animation saved to {save_animation}")
-            if return_plotter:
-                return plotter
-            return None
-
-        if return_plotter:
-            # Caller drives show() themselves, so we can't run our own
-            # frame-advancing loop here — fall back to a VTK repeating timer.
+        else:
+            # Interactive animation: use VTK timer
             frame_index = [0]
 
             def update_frame(step):
@@ -555,34 +549,14 @@ def flypath3d(data, line_width=50, color=None, colormap=None,
                 if trail_actor is not None:
                     trail_actor.mapper.dataset = _trail_tube(frame_indices[f_idx] / max(1, n_spline - 1))
                 frame_index[0] += 1
-
+            
             duration_ms = max(10, int((speed * 1000) // n_frames))
             plotter.add_timer_event(100000, duration_ms, update_frame)
+        
+        if return_plotter:
             return plotter
-
-        if not off_screen:
-            # Interactive animation: drive frames from a plain Python loop via
-            # show(interactive_update=True) + update(), instead of a native
-            # VTK repeating timer (add_timer_event). On Windows, PyVista's
-            # show() skips the normal blocking interactor loop that would
-            # dispatch timer callbacks — a documented workaround for
-            # interactor unresponsiveness (pyvista/pyvista#8383) — so a timer
-            # registered via add_timer_event never fires there and the
-            # animation looks frozen on the first frame. update() pumps
-            # events through the same path on every platform.
-            duration_s = max(0.001, speed / n_frames)
-            plotter.show(auto_close=False, interactive_update=True)
-            f_idx = 0
-            while not plotter._closed:
-                anim_actor.user_matrix = frame_matrices[f_idx]
-                if trail_actor is not None:
-                    trail_actor.mapper.dataset = _trail_tube(frame_indices[f_idx] / max(1, n_spline - 1))
-                try:
-                    plotter.update()
-                except Exception:
-                    break
-                time.sleep(duration_s)
-                f_idx = (f_idx + 1) % n_frames
+        if not off_screen and save_animation is None:
+            plotter.show()
         return None
     
     if return_plotter:
@@ -1017,67 +991,50 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                 k = max(2, int(round(fr * (n_t - 1))) + 1)
                 actor.mapper.dataset = pv.Spline(tpts[:k]).tube(radius=tr)
 
-        def _apply_frame(f_idx):
-            for fd in frame_data:
-                n_local = len(fd['positions'])
-                li = min(f_idx, n_local - 1)
-                if fd['is_model']:
-                    fd['actor'].user_matrix = fd['matrices'][li]
-                else:
-                    pos = fd['positions'][li]
-                    fd['actor'].SetPosition(pos[0], pos[1], pos[2])
-            _grow_trails(f_idx)
-
         if save_animation is not None:
             # For GIF saving: render each frame via screenshot (offscreen)
             import imageio
             frames = []
             for f_idx in range(n_frames):
-                _apply_frame(f_idx)
+                for fd in frame_data:
+                    n_local = len(fd['positions'])
+                    li = min(f_idx, n_local - 1)
+                    if fd['is_model']:
+                        fd['actor'].user_matrix = fd['matrices'][li]
+                    else:
+                        pos = fd['positions'][li]
+                        fd['actor'].SetPosition(pos[0], pos[1], pos[2])
+                _grow_trails(f_idx)
                 # Force a render; screenshot() alone won't reflect the updates.
                 plotter.render()
                 img = plotter.screenshot(return_img=True)
                 frames.append(img)
             imageio.mimsave(save_animation, frames, fps=30, loop=0)
             print(f"Animation saved to {save_animation}")
-            if return_plotter:
-                return plotter
-            return None
-
-        if return_plotter:
-            # Caller drives show() themselves, so we can't run our own
-            # frame-advancing loop here — fall back to a VTK repeating timer.
+        else:
+            # Interactive animation: use VTK timer
             frame_index = [0]
-
+            
             def update_frame(step):
-                _apply_frame(frame_index[0] % n_frames)
+                f_idx = frame_index[0] % n_frames
+                for fd in frame_data:
+                    n_local = len(fd['positions'])
+                    li = min(f_idx, n_local - 1)
+                    if fd['is_model']:
+                        fd['actor'].user_matrix = fd['matrices'][li]
+                    else:
+                        pos = fd['positions'][li]
+                        fd['actor'].SetPosition(pos[0], pos[1], pos[2])
+                _grow_trails(f_idx)
                 frame_index[0] += 1
 
             duration_ms = max(10, int((speed * 1000) // n_frames))
             plotter.add_timer_event(100000, duration_ms, update_frame)
+        
+        if return_plotter:
             return plotter
-
-        if not off_screen:
-            # Interactive animation: drive frames from a plain Python loop via
-            # show(interactive_update=True) + update(), instead of a native
-            # VTK repeating timer (add_timer_event). On Windows, PyVista's
-            # show() skips the normal blocking interactor loop that would
-            # dispatch timer callbacks — a documented workaround for
-            # interactor unresponsiveness (pyvista/pyvista#8383) — so a timer
-            # registered via add_timer_event never fires there and the
-            # animation looks frozen on the first frame. update() pumps
-            # events through the same path on every platform.
-            duration_s = max(0.001, speed / n_frames)
-            plotter.show(auto_close=False, interactive_update=True)
-            f_idx = 0
-            while not plotter._closed:
-                _apply_frame(f_idx)
-                try:
-                    plotter.update()
-                except Exception:
-                    break
-                time.sleep(duration_s)
-                f_idx = (f_idx + 1) % n_frames
+        if not off_screen and save_animation is None:
+            plotter.show()
         return None
     
     if return_plotter:
