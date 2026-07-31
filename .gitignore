@@ -29,5 +29,5 @@ Thumbs.db
 env.txt
 
 # Build artifacts
-*.speccombat_example.png
+combat_example.png
 combat_example.gif

@@ -174,7 +174,7 @@ flypath3d_multi(
 
 ```bash
 # Install PyInstaller
-pip install pyinstaller
+pip install pyinstaller pyinstaller-hooks-contrib
 
 # Build
 chmod +x build.sh
