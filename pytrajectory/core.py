@@ -549,19 +549,29 @@ def flypath3d(data, line_width=50, color=None, colormap=None,
                 if trail_actor is not None:
                     trail_actor.mapper.dataset = _trail_tube(frame_indices[f_idx] / max(1, n_spline - 1))
                 frame_index[0] += 1
-            
+
+            # The interactor must be initialized before the timer is created.
+            # On Windows, timers are implemented as SetTimer(window_handle, ...),
+            # and the handle only exists once the interactor is initialized;
+            # register beforehand and the timer is silently bound to no window,
+            # so its messages never reach the interactor, no TimerEvent is ever
+            # emitted, and the animation sits frozen on frame 0. The X11/Cocoa
+            # interactors don't need a realized window, which is why this only
+            # ever showed up on Windows.
+            if not off_screen:
+                plotter.iren.initialize()
             duration_ms = max(10, int((speed * 1000) // n_frames))
             plotter.add_timer_event(100000, duration_ms, update_frame)
-        
+
         if return_plotter:
             return plotter
         if not off_screen and save_animation is None:
             plotter.show()
         return None
-    
+
     if return_plotter:
         return plotter
-    
+
     if not off_screen:
         plotter.show()
     return None
@@ -1028,6 +1038,11 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                 _grow_trails(f_idx)
                 frame_index[0] += 1
 
+            # See the matching note in flypath3d: the interactor has to be
+            # initialized before the timer is created or the animation never
+            # starts on Windows.
+            if not off_screen:
+                plotter.iren.initialize()
             duration_ms = max(10, int((speed * 1000) // n_frames))
             plotter.add_timer_event(100000, duration_ms, update_frame)
         
