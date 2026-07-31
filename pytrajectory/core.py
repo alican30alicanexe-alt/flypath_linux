@@ -331,10 +331,7 @@ def _mount_base(init_dir, full_data, pitch_col, yaw_col, from_mat,
     flight.
     """
     base_align = _alignment_rotation(init_dir)
-    if full_data is None:
-        return base_align
-    n_data = len(full_data)
-    if n_data <= max(pitch_col, yaw_col):
+    if not _has_attitude(full_data, pitch_col, yaw_col):
         return base_align
     p0 = full_data[0, pitch_col]
     y0 = full_data[0, yaw_col]
@@ -342,6 +339,20 @@ def _mount_base(init_dir, full_data, pitch_col, yaw_col, from_mat,
         p0, y0 = np.degrees(p0), np.degrees(y0)
     r0 = _euler_to_matrix([pitch_sign * p0], [yaw_sign * y0], [0.0])[0]
     return base_align @ r0.T
+
+
+def _has_attitude(full_data, *cols):
+    """True if `full_data` actually carries the requested attitude columns.
+
+    The test is on the column count, not the row count: a plain x,y,z track is
+    (N, 3) however long it is, and comparing its length against a column index
+    reads any trajectory with more than a handful of samples as having
+    orientation data — then raises IndexError on the first attitude lookup.
+    """
+    if full_data is None:
+        return False
+    arr = np.asarray(full_data)
+    return arr.ndim == 2 and arr.shape[1] > max(cols)
 
 
 def _face_is_path(face):
@@ -394,8 +405,8 @@ def _model_matrices_along(sd, spline_indices, yaw_sign=-1.0, pitch_sign=-1.0,
 
     fd = sd['full_data']
     n_data = len(fd) if fd is not None else 0
-    has_orient = (fd is not None and
-                  n_data > max(sd['pitch_col'], sd['yaw_col'], sd['roll_col'])
+    has_orient = (_has_attitude(fd, sd['pitch_col'], sd['yaw_col'],
+                                sd['roll_col'])
                   and not _face_is_path(face))
 
     if has_orient:
@@ -679,9 +690,8 @@ def flypath3d(data, line_width=50, color=None, colormap=None,
 
         # Get orientation data if available
         n_data = len(full_data) if full_data is not None else 0
-        has_orientation = (full_data is not None and
-                          n_data > max(pitch_col, yaw_col, roll_col)
-                          and not _face_is_path(face))
+        has_orientation = (_has_attitude(full_data, pitch_col, yaw_col, roll_col)
+                           and not _face_is_path(face))
 
         if has_orientation:
             # Compute frame indices aligned to original data length
@@ -850,10 +860,12 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
     # Compute global bounds for consistent scaling
     all_points = []
     all_infos = []
+    all_full = []
     for traj in trajectories:
-        pts, _, info = load_trajectory(traj['data'])
+        pts, full, info = load_trajectory(traj['data'])
         all_points.append(pts)
         all_infos.append(info)
+        all_full.append(full)
     
     global_min = np.min([np.min(p, axis=0) for p in all_points], axis=0)
     global_max = np.max([np.max(p, axis=0) for p in all_points], axis=0)
@@ -876,7 +888,8 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
     spline_data = []
     any_label = False  # track whether a labeled mesh was actually drawn
 
-    for idx, (traj, points, info) in enumerate(zip(trajectories, all_points, all_infos)):
+    for idx, (traj, points, info, full_data) in enumerate(
+            zip(trajectories, all_points, all_infos, all_full)):
         color = traj.get('color', None)
         colormap = traj.get('colormap', None)
         line_width = traj.get('line_width', 50)
@@ -888,19 +901,14 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
         yaw_col = traj.get('yaw_col', col_map.get('yaw', 4))
         roll_col = traj.get('roll_col', col_map.get('roll', 5))
         
-        # Load full data for orientation
-        data = traj['data']
-        if isinstance(data, (str, Path)):
-            from .io import load_csv, load_mat
-            path = Path(data)
-            if path.suffix.lower() == '.mat':
-                full_data = load_mat(path)
-            else:
-                full_data, _, _ = load_csv(path)
-                full_data = full_data[0]  # points array
-        else:
+        # Orientation comes from the full table load_trajectory already
+        # returned above. Re-reading the file here used to unpack load_csv()'s
+        # (points, frame, col_map) into the wrong name and then index it, so a
+        # CSV's attitude columns were replaced by a single xyz point and every
+        # CSV trajectory silently fell back to facing along its path.
+        if full_data is None:
             full_data = points
-        
+
         # Determine color
         use_color = color if color is not None else 'blue'
         use_colormap = colormap if colormap is not None else None
@@ -1121,9 +1129,9 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
                 fd = sd['full_data']
                 n_data = len(fd) if fd is not None else 0
                 traj_face = traj.get('face', face)
-                has_orient = (fd is not None and
-                             n_data > max(sd['pitch_col'], sd['yaw_col'], sd['roll_col'])
-                             and not _face_is_path(traj_face))
+                has_orient = (_has_attitude(fd, sd['pitch_col'], sd['yaw_col'],
+                                            sd['roll_col'])
+                              and not _face_is_path(traj_face))
 
                 if has_orient:
                     # Mount rotation aligning the model's nose (+X) with the
