@@ -17,6 +17,55 @@ Uses **PyVista (VTK)** for high-quality, MATLAB-like 3D rendering with equal asp
 - **Animation export** — save as GIF
 - **Standalone executable** — build with PyInstaller (no Python required)
 
+## Showcase
+
+A taste of what pytrajectory can do beyond a single trajectory — three paths,
+their own 3D models, colors, a thick trail, and a flying animation, all from
+one command. Friendly and enemy aircraft plus a missile, each with its own
+model and color:
+
+```bash
+pytrajectory \
+  --traj examples/trajectory_friend.mat color=green model=models/f-16.mat \
+  --traj examples/trajectory_enemy.mat  color=black model=models/f-16.mat \
+  --traj examples/trajectory_aam.mat    color=red   model=models/missile.mat scale=10 \
+  --line-width 100 --animate --trail \
+  --xlim -3000 1000 --zlim 0 1000
+```
+
+What each part does:
+
+- `--traj <path> key=value ...` — one block per trajectory; repeat it for as
+  many paths as you want in the same scene (here: friend, enemy, missile).
+- `color=` — path/trail color for that trajectory.
+- `model=` — attaches a 3D model (`.mat` file) that flies along the path.
+- `scale=10` — the missile model is scaled 10x. Missiles are much smaller
+  than aircraft in real proportions, so without this it's barely visible.
+- `--line-width 100` — a thick trail line (default is 50).
+- `--animate --trail` — flies each model along its path and reveals the
+  trail progressively as the model passes over it, instead of drawing the
+  whole path upfront.
+- `--xlim ... --zlim ...` — pins the camera box to a fixed size instead of
+  auto-fitting to the data.
+
+Drop `--xlim`/`--zlim` and the box auto-fits to the data instead — a bigger,
+uncropped view, handy when you don't already know the scene's extent:
+
+```bash
+pytrajectory \
+  --traj examples/trajectory_friend.mat color=green model=models/f-16.mat \
+  --traj examples/trajectory_enemy.mat  color=black model=models/f-16.mat \
+  --traj examples/trajectory_aam.mat    color=red   model=models/missile.mat scale=10 \
+  --line-width 100 --animate --trail
+```
+
+> Tip: a long, thin model (like a scaled-up missile) can wobble/slalom if its
+> attitude data is noisy. Add `face=path` to that trajectory's block to point
+> it along the direction of travel instead of using its attitude columns.
+
+Both commands are also in [`examples/cli_showcase.sh`](examples/cli_showcase.sh)
+if you'd rather copy from a file than the README.
+
 ## Installation
 
 ```bash
