@@ -287,7 +287,7 @@ self-contained: the executable, the Python/PyVista/VTK runtime, and the
 `models/`/`examples/` folders all sit side by side, so the whole folder can be
 zipped and moved to another machine without Python installed. `pytrajectory.spec`
 does *not* bundle `models/`/`examples/` itself — `build.sh` (and the
-[`build-windows`](.github/workflows/build-windows.yml) CI workflow) copy them
+[`build-release`](.github/workflows/build-release.yml) CI workflow) copy them
 in as a separate step after PyInstaller runs, since PyInstaller's own
 data-bundling puts them somewhere the executable can't find by relative path.
 

@@ -1,4 +1,4 @@
-name: Build Windows Executable
+name: Build Release Executables
 
 # Runs automatically whenever a `v*` tag is pushed (which `gh release create`
 # does for you), or manually via workflow_dispatch to backfill an existing
@@ -11,13 +11,57 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag to attach the Windows build to (e.g. v0.1.0)'
+        description: 'Release tag to attach the builds to (e.g. v0.1.0)'
         required: true
 
 permissions:
   contents: write
 
 jobs:
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install system libraries required by VTK/PyVista
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgl1 libxrender1 libxkbcommon-x11-0 libglx-mesa0
+
+      - name: Install dependencies
+        run: |
+          pip install -e .
+          pip install pyinstaller pyinstaller-hooks-contrib
+
+      - name: Build with PyInstaller
+        run: pyinstaller pytrajectory.spec --clean
+
+      - name: Bundle models/ and examples/ alongside the executable
+        run: cp -r models examples dist/pytrajectory/
+
+      - name: Package
+        run: |
+          cd dist
+          tar -czf pytrajectory-linux-x86_64.tar.gz pytrajectory
+
+      - name: Resolve release tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ steps.tag.outputs.tag }}" dist/pytrajectory-linux-x86_64.tar.gz --clobber
+
   build-windows:
     runs-on: windows-latest
     steps:
