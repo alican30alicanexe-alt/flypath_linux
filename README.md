@@ -33,6 +33,21 @@ pytrajectory \
   --xlim -3000 1000 --zlim 0 1000
 ```
 
+Windows (PowerShell) — same command, backtick line continuation and backslash paths:
+
+```powershell
+pytrajectory `
+  --traj examples\trajectory_friend.mat color=green model=models\f-16.mat `
+  --traj examples\trajectory_enemy.mat  color=black model=models\f-16.mat `
+  --traj examples\trajectory_aam.mat    color=red   model=models\missile.mat scale=10 `
+  --line-width 100 --animate --trail `
+  --xlim -3000 1000 --zlim 0 1000
+```
+
+If you're running the standalone build instead of a `pip install`, replace
+`pytrajectory` with `.\pytrajectory.exe` (Windows) or `./pytrajectory`
+(Linux), and run it from inside the extracted folder.
+
 What each part does:
 
 - `--traj <path> key=value ...` — one block per trajectory; repeat it for as
@@ -59,12 +74,23 @@ pytrajectory \
   --line-width 100 --animate --trail
 ```
 
+Windows (PowerShell):
+
+```powershell
+pytrajectory `
+  --traj examples\trajectory_friend.mat color=green model=models\f-16.mat `
+  --traj examples\trajectory_enemy.mat  color=black model=models\f-16.mat `
+  --traj examples\trajectory_aam.mat    color=red   model=models\missile.mat scale=10 `
+  --line-width 100 --animate --trail
+```
+
 > Tip: a long, thin model (like a scaled-up missile) can wobble/slalom if its
 > attitude data is noisy. Add `face=path` to that trajectory's block to point
 > it along the direction of travel instead of using its attitude columns.
 
 Both commands are also in [`examples/cli_showcase.sh`](examples/cli_showcase.sh)
-if you'd rather copy from a file than the README.
+(Linux/macOS) and [`examples/cli_showcase.ps1`](examples/cli_showcase.ps1)
+(Windows) if you'd rather copy from a file than the README.
 
 ## Installation
 
