@@ -21,12 +21,15 @@ hiddenimports = (
     ]
 )
 
+# models/ and examples/ are copied into dist/pytrajectory/ separately (see
+# build.sh / the Windows CI workflow) rather than bundled here. PyInstaller
+# 6+ hides datas inside a "_internal" subfolder by default; disabling that
+# (contents_directory='.') instead collides with our own top-level
+# `pytrajectory` package once the executable — also named `pytrajectory` —
+# sits flat in the same directory, breaking `import pytrajectory.core`. A
+# plain post-build copy sidesteps the whole _internal/collision question.
 datas = (
-    [
-        ('models', 'models'),
-        ('examples', 'examples'),
-    ]
-    + collect_data_files('pyvista')
+    collect_data_files('pyvista')
     + collect_data_files('vtkmodules')
     + copy_metadata('imageio')
 )

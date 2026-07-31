@@ -35,6 +35,11 @@ jobs:
       - name: Build with PyInstaller
         run: pyinstaller pytrajectory.spec --clean
 
+      - name: Bundle models/ and examples/ alongside the executable
+        run: |
+          Copy-Item -Recurse models dist\pytrajectory\models
+          Copy-Item -Recurse examples dist\pytrajectory\examples
+
       - name: Package
         run: Compress-Archive -Path dist\pytrajectory -DestinationPath dist\pytrajectory-windows-x86_64.zip
 

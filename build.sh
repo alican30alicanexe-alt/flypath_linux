@@ -39,6 +39,10 @@ echo "Step 2: Building standalone executable with PyInstaller..."
 pyinstaller pytrajectory.spec --clean
 
 echo ""
+echo "Step 3: Bundling models/ and examples/ alongside the executable..."
+cp -r models examples dist/pytrajectory/
+
+echo ""
 echo "=== Build Complete! ==="
 echo "Executable: dist/pytrajectory/pytrajectory"
 echo ""
@@ -48,4 +52,4 @@ echo "  ./dist/pytrajectory/pytrajectory --list-demos"
 echo ""
 echo "To run with a bundled model (from the dist directory):"
 echo "  cd dist/pytrajectory"
-echo "  ./pytrajectory ../../examples/sample_data.csv --model ../../models/f-16.mat --scale 10 --animate"
+echo "  ./pytrajectory examples/sample_data.csv --model models/f-16.mat --scale 10 --animate"
