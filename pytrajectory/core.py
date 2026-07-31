@@ -26,7 +26,7 @@ def _candidate_steps(span):
                   for m in STEP_MANTISSAS)
 
 
-def _fit_axis(lo, hi, max_div, flat_step=None):
+def _fit_axis(lo, hi, max_div, thin_step=None):
     """Snap one axis outward to round ticks, using the least padding possible.
 
     Picks the step that snaps the axis tightest without exceeding `max_div`
@@ -38,16 +38,24 @@ def _fit_axis(lo, hi, max_div, flat_step=None):
     ever cropped.
     """
     span = float(hi) - float(lo)
+    step = float(thin_step) if thin_step else None
 
-    if span <= 0:
-        # A flat axis (constant altitude, a planar path) has no extent to snap
-        # to, so it borrows the scene's step and pads symmetrically: a track
-        # sitting at z=0 in a scene gridded in 500s spans -500..500 rather than
-        # collapsing to a zero-thickness box.
-        step = float(flat_step) if flat_step else 1.0
-        a = np.floor((float(lo) - step) / step) * step
-        b = np.ceil((float(hi) + step) / step) * step
-        return float(a), float(b), int(round((b - a) / step)) + 1
+    if step is None and span <= 0:
+        # Every axis is a single point, so there is no scene step to borrow.
+        step = 1.0
+
+    if step is not None and span <= step:
+        # An axis thinner than one grid step of the scene — a constant altitude,
+        # a planar path, a track that wanders 76 m over 3 km — is a pancake
+        # under the true 1:1:1 aspect, and a genuinely flat one has no extent to
+        # snap to at all. Both get the same box: two grid steps wide, centred on
+        # the data, so the result depends on how thin the axis is and not on
+        # where it happens to sit. In a scene gridded in 500s a track at z=0
+        # spans -500..500 and one at z=600 spans 0..1000, rather than the second
+        # collecting a lopsided 0..1500 because 600 rounds differently than 0.
+        mid = (float(lo) + float(hi)) / 2
+        a = np.floor((mid - step / 2) / step) * step
+        return float(a), float(a + 2 * step), 3
 
     # A single division draws no interior grid line, which reads as a bare box
     # rather than a grid, so a step that splits the axis at least twice wins
@@ -103,16 +111,17 @@ def _nice_bounds(lo, hi, target_n=10):
         # magnitude of the coordinates is the only hint left.
         longest = max(float(np.abs(np.concatenate([lo, hi])).max()), 1.0)
 
-    # Fit the widest axis first: the step it settles on is what any flat axis
-    # borrows, which keeps one grid spacing across the whole scene.
-    fitted, flat_step = {}, None
+    # Fit the widest axis first: the step it settles on sets the scene's grid
+    # spacing, which is both what a too-thin axis is measured against and what
+    # it is then padded with.
+    fitted, thin_step = {}, None
     for axis in sorted(range(3), key=lambda a: -spans[a]):
         max_div = max(3, int(round(target_n * float(spans[axis]) / longest)))
         a, b, n_labels = _fit_axis(float(lo[axis]), float(hi[axis]),
-                                   max_div, flat_step)
+                                   max_div, thin_step)
         fitted[axis] = (a, b, n_labels)
-        if flat_step is None and n_labels > 1:
-            flat_step = (b - a) / (n_labels - 1)
+        if thin_step is None and n_labels > 1:
+            thin_step = (b - a) / (n_labels - 1)
 
     box, ticks = [], []
     for axis in range(3):

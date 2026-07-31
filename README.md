@@ -164,10 +164,15 @@ Two details worth knowing:
 - **Label density follows axis length.** Under a real 1:1:1 aspect a short axis
   is short on screen, so it is given proportionally fewer ticks — otherwise its
   labels overlap into an unreadable smear.
-- **A flat axis still gets a box.** A path at constant altitude has no extent to
-  snap to, so it borrows the scene's grid step and pads symmetrically: a track
-  sitting at z=0 in a scene gridded in 500s spans -500..500 instead of
-  collapsing to a zero-thickness slab.
+- **A too-thin axis is given a box of its own.** An axis spanning less than one
+  grid step of the scene — a constant altitude, a planar path, a track that
+  wanders 76 m over 3 km — renders as a pancake under a true 1:1:1 aspect, and a
+  perfectly flat one has no extent to snap to at all. Both get a box two grid
+  steps wide, centred on the data, so the result follows how thin the axis is
+  rather than where it happens to sit: in a scene gridded in 500s a track at
+  z=0 spans -500..500 and one at z=600 spans 0..1000. Note this only buys the
+  box some depth — it cannot reveal detail that is genuinely flat at 1:1:1. Use
+  `--z-scale` for that, or pin the axis with `--zlim`.
 
 ### Orientation / angle conventions
 
