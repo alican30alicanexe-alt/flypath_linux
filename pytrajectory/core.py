@@ -949,16 +949,19 @@ def flypath3d_multi(trajectories, models=None, show_grid=True, show_axes=True,
             'color': use_color,
         })
     
-    # Grid
+    # Grid. The derived label counts and format are defaults here: merging
+    # grid_kwargs over them keeps it able to override any single one, which
+    # passing both as keywords would turn into a duplicate-argument TypeError.
     def _draw_grid():
-        plotter.show_grid(
+        kwargs = dict(
             show_xaxis=show_axes, show_yaxis=show_axes, show_zaxis=show_axes,
             grid=True, location='outer', bold=True, font_size=10,
             bounds=global_bounds,
             n_xlabels=n_labels[0], n_ylabels=n_labels[1], n_zlabels=n_labels[2],
             fmt=fmt,
-            **(grid_kwargs or {}),
         )
+        kwargs.update(grid_kwargs or {})
+        plotter.show_grid(**kwargs)
 
     if show_grid:
         _draw_grid()
