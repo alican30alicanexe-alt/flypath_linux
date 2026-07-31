@@ -25,6 +25,8 @@ one command. Friendly and enemy aircraft plus a missile, each with its own
 model and color:
 
 ```bash
+# pip install: run as "pytrajectory". Standalone build: run from inside the
+# extracted folder as "./pytrajectory" instead.
 pytrajectory \
   --traj examples/trajectory_friend.mat color=green model=models/f-16.mat \
   --traj examples/trajectory_enemy.mat  color=black model=models/f-16.mat \
@@ -36,6 +38,9 @@ pytrajectory \
 Windows (PowerShell) — same command, backtick line continuation and backslash paths:
 
 ```powershell
+# pip install: run as "pytrajectory". Standalone build: PowerShell won't run
+# an exe from the current folder by bare name, run it from inside the
+# extracted folder as ".\pytrajectory.exe" instead.
 pytrajectory `
   --traj examples\trajectory_friend.mat color=green model=models\f-16.mat `
   --traj examples\trajectory_enemy.mat  color=black model=models\f-16.mat `
@@ -43,10 +48,6 @@ pytrajectory `
   --line-width 100 --animate --trail `
   --xlim -3000 1000 --zlim 0 1000
 ```
-
-If you're running the standalone build instead of a `pip install`, replace
-`pytrajectory` with `.\pytrajectory.exe` (Windows) or `./pytrajectory`
-(Linux), and run it from inside the extracted folder.
 
 What each part does:
 
@@ -67,6 +68,7 @@ Drop `--xlim`/`--zlim` and the box auto-fits to the data instead — a bigger,
 uncropped view, handy when you don't already know the scene's extent:
 
 ```bash
+# pip install: "pytrajectory". Standalone build: "./pytrajectory".
 pytrajectory \
   --traj examples/trajectory_friend.mat color=green model=models/f-16.mat \
   --traj examples/trajectory_enemy.mat  color=black model=models/f-16.mat \
@@ -77,6 +79,7 @@ pytrajectory \
 Windows (PowerShell):
 
 ```powershell
+# pip install: "pytrajectory". Standalone build: ".\pytrajectory.exe".
 pytrajectory `
   --traj examples\trajectory_friend.mat color=green model=models\f-16.mat `
   --traj examples\trajectory_enemy.mat  color=black model=models\f-16.mat `
